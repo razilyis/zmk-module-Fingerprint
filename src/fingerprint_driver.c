@@ -1,5 +1,8 @@
 #include "touchpass.h"
 #include <zephyr/logging/log.h>
+#include <zmk/endpoints.h>
+#include <zmk/hid.h>
+#include <zmk/keys.h>
 
 LOG_MODULE_REGISTER(touchpass_driver, CONFIG_ZMK_LOG_LEVEL);
 
@@ -102,6 +105,20 @@ int touchpass_authenticate(finger_data_t *data) {
   return -EACCES;
 }
 
+static uint8_t ascii_to_hid_usage(char c) {
+  if (c >= 'a' && c <= 'z')
+    return 0x04 + (c - 'a');
+  if (c >= 'A' && c <= 'Z')
+    return 0x04 + (c - 'A');
+  if (c >= '1' && c <= '9')
+    return 0x1E + (c - '1');
+  if (c == '0')
+    return 0x27;
+  if (c == ' ')
+    return 0x2C;
+  return 0;
+}
+
 #ifdef CONFIG_ZMK_TOUCHPASS_ALWAYS_ON
 static void polling_thread(void *p1, void *p2, void *p3) {
   LOG_INF("TouchPass continuous polling thread started");
@@ -112,17 +129,21 @@ static void polling_thread(void *p1, void *p2, void *p3) {
       // Success: HID output handled here or via notify mechanism
       // For now, let's keep it consistent with the behavior's HID logic
       for (int i = 0; data.password[i] != '\0'; i++) {
-        zmk_hid_keyboard_press(zmk_hid_key_to_usage(data.password[i]));
-        zmk_hid_keyboard_release(zmk_hid_key_to_usage(data.password[i]));
+        uint8_t usage = ascii_to_hid_usage(data.password[i]);
+        if (usage) {
+          zmk_hid_keyboard_press(usage);
+          zmk_endpoints_send_report(HID_USAGE_KEY);
+          zmk_hid_keyboard_release(usage);
+          zmk_endpoints_send_report(HID_USAGE_KEY);
+        }
         k_sleep(K_MSEC(10));
       }
       if (data.press_enter) {
-        zmk_hid_keyboard_press(ZMK_HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
-        zmk_hid_keyboard_release(ZMK_HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+        zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+        zmk_endpoints_send_report(HID_USAGE_KEY);
+        zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+        zmk_endpoints_send_report(HID_USAGE_KEY);
       }
-      zmk_endpoints_send_report(
-          ZMK_ENDPOINT_BT); // Always-on is often used with BT/Battery concerns,
-                            // but here we send to current endpoint
       k_sleep(K_MSEC(2000)); // Cool down after successful match
     }
     k_sleep(K_MSEC(200)); // Poll at 5Hz

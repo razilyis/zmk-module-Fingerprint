@@ -1,3 +1,4 @@
+#define DT_DRV_COMPAT zmk_behavior_touchpass
 #include "touchpass.h"
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
@@ -8,6 +9,20 @@
 #include <zmk/keys.h>
 
 LOG_MODULE_DECLARE(touchpass_driver, CONFIG_ZMK_LOG_LEVEL);
+
+static uint8_t ascii_to_hid_usage(char c) {
+  if (c >= 'a' && c <= 'z')
+    return 0x04 + (c - 'a');
+  if (c >= 'A' && c <= 'Z')
+    return 0x04 + (c - 'A');
+  if (c >= '1' && c <= '9')
+    return 0x1E + (c - '1');
+  if (c == '0')
+    return 0x27;
+  if (c == ' ')
+    return 0x2C;
+  return 0;
+}
 
 /* Behavior binding implementation */
 static int
@@ -21,18 +36,22 @@ behavior_tp_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 
     // Type the password
     for (int i = 0; data.password[i] != '\0'; i++) {
-      zmk_hid_keyboard_press(
-          zmk_hid_key_to_usage(data.password[i])); // This is simplified
-      zmk_hid_keyboard_release(zmk_hid_key_to_usage(data.password[i]));
+      uint8_t usage = ascii_to_hid_usage(data.password[i]);
+      if (usage) {
+        zmk_hid_keyboard_press(usage);
+        zmk_endpoints_send_report(HID_USAGE_KEY);
+        zmk_hid_keyboard_release(usage);
+        zmk_endpoints_send_report(HID_USAGE_KEY);
+      }
       k_sleep(K_MSEC(10));
     }
 
     if (data.press_enter) {
-      zmk_hid_keyboard_press(ZMK_HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
-      zmk_hid_keyboard_release(ZMK_HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+      zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+      zmk_endpoints_send_report(HID_USAGE_KEY);
+      zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+      zmk_endpoints_send_report(HID_USAGE_KEY);
     }
-
-    zmk_endpoints_send_report(ZMK_ENDPOINT_USB); // Send report
   } else {
     LOG_WRN("Authentication failed or timed out");
   }
