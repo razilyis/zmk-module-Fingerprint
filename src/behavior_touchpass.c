@@ -1,9 +1,9 @@
 #define DT_DRV_COMPAT zmk_behavior_touchpass
 #include "touchpass.h"
+#include <drivers/behavior.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zmk/behavior.h>
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
 #include <zmk/keys.h>
@@ -66,6 +66,7 @@ behavior_tp_keymap_binding_released(struct zmk_behavior_binding *binding,
 }
 
 static const struct behavior_driver_api behavior_tp_driver_api = {
+    .locality = BEHAVIOR_LOCALITY_CENTRAL,
     .binding_pressed = behavior_tp_keymap_binding_pressed,
     .binding_released = behavior_tp_keymap_binding_released,
 };
