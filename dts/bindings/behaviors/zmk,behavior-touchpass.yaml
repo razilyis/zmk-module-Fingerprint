@@ -6,4 +6,5 @@ include: [base.yaml]
 
 properties:
   "#binding-cells":
+    type: int
     const: 0
