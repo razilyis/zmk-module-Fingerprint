@@ -10,10 +10,10 @@ LOG_MODULE_REGISTER(touchpass_storage, CONFIG_ZMK_LOG_LEVEL);
 
 /* JSON Descriptors (Zephyr's simple JSON) */
 static const struct json_obj_descr finger_descr[] = {
-    JSON_OBJ_DESCR_PRIM(finger_data_t, name, JSON_TYPE_STRING),
-    JSON_OBJ_DESCR_PRIM(finger_data_t, password, JSON_TYPE_STRING),
-    JSON_OBJ_DESCR_PRIM(finger_data_t, press_enter, JSON_TYPE_BOOL),
-    JSON_OBJ_DESCR_PRIM(finger_data_t, finger_id, JSON_TYPE_INT),
+    JSON_OBJ_DESCR_PRIM(finger_data_t, name, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(finger_data_t, password, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(finger_data_t, press_enter, JSON_TOK_TRUE),
+    JSON_OBJ_DESCR_PRIM(finger_data_t, finger_id, JSON_TOK_NUMBER),
 };
 
 static int ensure_dir(void) {
