@@ -33,12 +33,6 @@ config ZMK_TOUCHPASS_ALWAYS_ON
         If enabled, the sensor will constantly poll for fingerprints.
         WARNING: This will significantly increase battery consumption.
 
-config ZMK_TOUCHPASS_STORAGE_PATH
-    string "Internal Storage Path"
-    default "/lfs/tp"
-    help
-        Path where fingerprint data and passwords will be stored.
-
 config ZMK_TOUCHPASS_SERIAL_RPC
     bool "Enable Serial RPC (for config.html)"
     default y
