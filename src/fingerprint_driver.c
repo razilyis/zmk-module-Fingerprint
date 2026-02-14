@@ -102,7 +102,15 @@ int touchpass_authenticate(finger_data_t *data) {
 
   uint16_t match_id;
   if (search_finger(&match_id) == 0) {
+#ifdef CONFIG_FILE_SYSTEM
     return touchpass_get_finger(match_id, data);
+#else
+    data->finger_id = match_id;
+    snprintf(data->name, sizeof(data->name), "finger_%d", match_id);
+    data->password[0] = '\0';
+    data->press_enter = false;
+    return 0;
+#endif
   }
   return -EACCES;
 }
@@ -146,11 +154,11 @@ int touchpass_init(void) {
   uart_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
   if (!device_is_ready(uart_dev)) {
     LOG_ERR("UART device not ready");
-    return -ENODEV;
+    uart_dev = NULL;
+    // Return 0 to avoid fatal SYS_INIT failure
+    return 0;
   }
 
-  // Initial handshake removed from SYS_INIT to prevent boot hang.
-  // Handshake will be performed lazily on first access.
   LOG_INF("TouchPass driver initialized (Handshake deferred)");
   return 0;
 }
