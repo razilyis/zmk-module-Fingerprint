@@ -102,7 +102,7 @@ int touchpass_authenticate(finger_data_t *data) {
 
   uint16_t match_id;
   if (search_finger(&match_id) == 0) {
-#ifdef CONFIG_FILE_SYSTEM
+#ifdef CONFIG_NVS
     return touchpass_get_finger(match_id, data);
 #else
     data->finger_id = match_id;
@@ -157,7 +157,7 @@ int touchpass_init(void) {
     uart_dev = NULL;
   }
 
-#ifdef CONFIG_FILE_SYSTEM
+#ifdef CONFIG_NVS
   int rc = touchpass_storage_init();
   if (rc != 0) {
     LOG_WRN("TouchPass storage init failed: %d (non-fatal)", rc);
