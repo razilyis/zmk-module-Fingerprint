@@ -1,7 +1,7 @@
 #define DT_DRV_COMPAT zmk_behavior_touchpass
 #include "touchpass.h"
+#include <drivers/behavior.h>
 #include <zephyr/device.h>
-#include <zephyr/drivers/behavior.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zmk/endpoints.h>
