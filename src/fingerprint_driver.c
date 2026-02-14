@@ -149,14 +149,9 @@ int touchpass_init(void) {
     return -ENODEV;
   }
 
-  // Initial handshake
-  uint8_t cmd[] = {CMD_HANDSHAKE};
-  send_packet(FP_CMD_PACKET, cmd, 1);
-  if (receive_packet(1000) < 0 || rx_buf[9] != 0x00) {
-    LOG_WRN("Sensor handshake failed");
-  }
-
-  LOG_INF("TouchPass driver initialized");
+  // Initial handshake removed from SYS_INIT to prevent boot hang.
+  // Handshake will be performed lazily on first access.
+  LOG_INF("TouchPass driver initialized (Handshake deferred)");
   return 0;
 }
 
