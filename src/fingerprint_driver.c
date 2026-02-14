@@ -107,20 +107,6 @@ int touchpass_authenticate(finger_data_t *data) {
   return -EACCES;
 }
 
-static uint8_t ascii_to_hid_usage(char c) {
-  if (c >= 'a' && c <= 'z')
-    return 0x04 + (c - 'a');
-  if (c >= 'A' && c <= 'Z')
-    return 0x04 + (c - 'A');
-  if (c >= '1' && c <= '9')
-    return 0x1E + (c - '1');
-  if (c == '0')
-    return 0x27;
-  if (c == ' ')
-    return 0x2C;
-  return 0;
-}
-
 #ifdef CONFIG_ZMK_TOUCHPASS_ALWAYS_ON
 static void polling_thread(void *p1, void *p2, void *p3) {
   LOG_INF("TouchPass continuous polling thread started");
