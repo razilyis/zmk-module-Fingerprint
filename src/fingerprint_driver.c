@@ -1,4 +1,6 @@
 #include "touchpass.h"
+#include <zephyr/drivers/uart.h>
+#include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
@@ -172,4 +174,6 @@ int touchpass_init(void) {
   return 0;
 }
 
-/* More driver implementation will follow in next steps */
+static int touchpass_pre_init(void) { return touchpass_init(); }
+
+SYS_INIT(touchpass_pre_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
