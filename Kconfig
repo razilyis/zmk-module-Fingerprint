@@ -1,0 +1,49 @@
+# TouchPass ZMK Module Configuration
+
+menuconfig ZMK_TOUCHPASS
+    bool "TouchPass Fingerprint Module"
+    default n
+    depends on UART_INTERRUPT_DRIVEN
+    help
+        Enable the TouchPass fingerprint authentication module.
+
+if ZMK_TOUCHPASS
+
+config ZMK_TOUCHPASS_UART_NAME
+    string "UART Device Name"
+    default "UART_1"
+    help
+        The name of the UART device connected to the fingerprint sensor.
+
+config ZMK_TOUCHPASS_UART_TX_PIN
+    int "UART TX Pin"
+    default 6
+    help
+        XIAO nRF52840 default TX pin for Serial1 is D6 (P1.11).
+
+config ZMK_TOUCHPASS_UART_RX_PIN
+    int "UART RX Pin"
+    default 7
+    help
+        XIAO nRF52840 default RX pin for Serial1 is D7 (P1.12).
+
+config ZMK_TOUCHPASS_ALWAYS_ON
+    bool "Always-on (Polling) Mode"
+    default n
+    help
+        If enabled, the sensor will constantly poll for fingerprints.
+        WARNING: This will significantly increase battery consumption.
+
+config ZMK_TOUCHPASS_STORAGE_PATH
+    string "Internal Storage Path"
+    default "/lfs/tp"
+    help
+        Path where fingerprint data and passwords will be stored.
+
+config ZMK_TOUCHPASS_SERIAL_RPC
+    bool "Enable Serial RPC (for config.html)"
+    default y
+    help
+        Enable JSON-RPC communication over USB Serial for the web configuration tool.
+
+endif # ZMK_TOUCHPASS
