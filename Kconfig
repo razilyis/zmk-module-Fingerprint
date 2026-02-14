@@ -1,19 +1,18 @@
 # TouchPass ZMK Module Configuration
 
 menuconfig ZMK_TOUCHPASS
-    bool "TouchPass Fingerprint Module"
-    default n
-    depends on UART_INTERRUPT_DRIVEN
-    help
-        Enable the TouchPass fingerprint authentication module.
+	bool "TouchPass Fingerprint Module"
+	depends on SERIAL
+	help
+	  Enable TouchPass Fingerprint authentication and password storage.
 
 if ZMK_TOUCHPASS
 
 config ZMK_TOUCHPASS_UART_NAME
-    string "UART Device Name"
-    default "UART_1"
-    help
-        The name of the UART device connected to the fingerprint sensor.
+	string "UART Device Name"
+	default "uart0"
+	help
+	  The name of the UART device connected to the fingerprint sensor.
 
 config ZMK_TOUCHPASS_UART_TX_PIN
     int "UART TX Pin"

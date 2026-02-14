@@ -152,14 +152,14 @@ static void polling_thread(void *p1, void *p2, void *p3) {
   }
 }
 
-K_THREAD_DEFINE(tp_polling_tid, 1024, polling_thread, NULL, NULL, NULL, 7, 0,
+K_THREAD_DEFINE(tp_polling_tid, 2048, polling_thread, NULL, NULL, NULL, 7, 0,
                 0);
 #endif
 
 int touchpass_init(void) {
-  uart_dev = device_get_binding(CONFIG_ZMK_TOUCHPASS_UART_NAME);
-  if (!uart_dev) {
-    LOG_ERR("UART device %s not found", CONFIG_ZMK_TOUCHPASS_UART_NAME);
+  uart_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
+  if (!device_is_ready(uart_dev)) {
+    LOG_ERR("UART device not ready");
     return -ENODEV;
   }
 
