@@ -45,10 +45,10 @@ config ZMK_TOUCHPASS_SERIAL_RPC
     help
         Enable JSON-RPC communication over USB Serial for the web configuration tool.
 
-endif # ZMK_TOUCHPASS
-
 # Compatibility for ZMK v0.3 / Zephyr 3.5 settings mismatch
 config SETTINGS_FS_FILE
     string
     default "/lfs/zmk.settings"
     depends on SETTINGS_FILE
+
+endif # ZMK_TOUCHPASS
