@@ -8,6 +8,7 @@ LOG_MODULE_REGISTER(touchpass_rpc, CONFIG_ZMK_LOG_LEVEL);
 #ifdef CONFIG_ZMK_TOUCHPASS_SERIAL_RPC
 
 static void rpc_thread(void *p1, void *p2, void *p3) {
+  usb_enable(NULL);
   const struct device *dev = device_get_binding("CDC_ACM_0");
   if (!dev) {
     LOG_ERR("CDC_ACM_0 not found for RPC");
