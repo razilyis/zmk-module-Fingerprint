@@ -15,4 +15,9 @@ if(CONFIG_ZMK_TOUCHPASS)
 
     # Requirements: UART, File System, JSON
     zephyr_library_link_libraries(zephyr_interface)
+
+    # LittleFS include path (lfs.h is in the external module, not in zephyr_interface)
+    if(CONFIG_FILE_SYSTEM_LITTLEFS AND DEFINED ZEPHYR_LITTLEFS_MODULE_DIR)
+        zephyr_library_include_directories(${ZEPHYR_LITTLEFS_MODULE_DIR})
+    endif()
 endif()
