@@ -54,8 +54,12 @@ int touchpass_enroll_start(const char *name, const char *password,
                            bool press_enter, int finger_id);
 int touchpass_enroll_step(void);
 void touchpass_enroll_cancel(void);
-int touchpass_delete_finger(uint16_t id);
+
+/* Storage API (available when CONFIG_FILE_SYSTEM is enabled) */
+int touchpass_storage_init(void);
 int touchpass_get_finger(uint16_t id, finger_data_t *data);
+int touchpass_save_finger(uint16_t id, const finger_data_t *data);
+int touchpass_delete_finger(uint16_t id);
 
 static inline uint8_t ascii_to_hid_usage(char c) {
   if (c >= 'a' && c <= 'z')

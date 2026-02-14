@@ -1,14 +1,40 @@
 #include "touchpass.h"
 #include <stdio.h>
+#include <string.h>
 #include <zephyr/data/json.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/fs/littlefs.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/storage/flash_map.h>
 
 LOG_MODULE_REGISTER(touchpass_storage, CONFIG_ZMK_LOG_LEVEL);
 
-#define STORAGE_DIR CONFIG_ZMK_TOUCHPASS_STORAGE_PATH
+#define TP_MNT_POINT "/tp"
 
-/* JSON Descriptors (Zephyr's simple JSON) */
+/* LittleFS mount (manual — do NOT use CONFIG_FS_LITTLEFS_FMP_DEV) */
+FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(tp_lfs_data);
+
+static struct fs_mount_t tp_mnt = {
+    .type = FS_LITTLEFS,
+    .fs_data = &tp_lfs_data,
+    .storage_dev = (void *)FIXED_PARTITION_ID(touchpass_partition),
+    .mnt_point = TP_MNT_POINT,
+};
+
+static bool storage_mounted;
+
+int touchpass_storage_init(void) {
+    int rc = fs_mount(&tp_mnt);
+    if (rc != 0) {
+        LOG_ERR("TouchPass LittleFS mount failed: %d", rc);
+        return rc;
+    }
+    storage_mounted = true;
+    LOG_INF("TouchPass storage mounted at %s", TP_MNT_POINT);
+    return 0;
+}
+
+/* JSON descriptors for finger_data_t */
 static const struct json_obj_descr finger_descr[] = {
     JSON_OBJ_DESCR_PRIM(finger_data_t, name, JSON_TOK_STRING),
     JSON_OBJ_DESCR_PRIM(finger_data_t, password, JSON_TOK_STRING),
@@ -16,52 +42,65 @@ static const struct json_obj_descr finger_descr[] = {
     JSON_OBJ_DESCR_PRIM(finger_data_t, finger_id, JSON_TOK_NUMBER),
 };
 
-static int ensure_dir(void) {
-  struct fs_dirent entry;
-  if (fs_stat(STORAGE_DIR, &entry) != 0) {
-    return fs_mkdir(STORAGE_DIR);
-  }
-  return 0;
-}
-
 int touchpass_get_finger(uint16_t id, finger_data_t *data) {
-  char path[64];
-  snprintf(path, sizeof(path), "%s/f%d.json", STORAGE_DIR, id);
+    if (!storage_mounted) {
+        return -ENODEV;
+    }
 
-  struct fs_file_t file;
-  fs_file_t_init(&file);
-  if (fs_open(&file, path, FS_O_READ) != 0)
-    return -ENOENT;
+    char path[48];
+    snprintf(path, sizeof(path), TP_MNT_POINT "/f%d.json", id);
 
-  char buf[256];
-  ssize_t len = fs_read(&file, buf, sizeof(buf) - 1);
-  fs_close(&file);
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, path, FS_O_READ) != 0) {
+        return -ENOENT;
+    }
 
-  if (len <= 0)
-    return -EIO;
-  buf[len] = '\0';
+    char buf[256];
+    ssize_t len = fs_read(&file, buf, sizeof(buf) - 1);
+    fs_close(&file);
 
-  return json_obj_parse(buf, len, finger_descr, ARRAY_SIZE(finger_descr), data);
+    if (len <= 0) {
+        return -EIO;
+    }
+    buf[len] = '\0';
+
+    return json_obj_parse(buf, len, finger_descr, ARRAY_SIZE(finger_descr), data);
 }
 
 int touchpass_save_finger(uint16_t id, const finger_data_t *data) {
-  ensure_dir();
-  char path[64];
-  snprintf(path, sizeof(path), "%s/f%d.json", STORAGE_DIR, id);
+    if (!storage_mounted) {
+        return -ENODEV;
+    }
 
-  char buf[256];
-  int len = json_obj_encode_buf(finger_descr, ARRAY_SIZE(finger_descr), data,
-                                buf, sizeof(buf));
-  if (len < 0)
-    return len;
+    char path[48];
+    snprintf(path, sizeof(path), TP_MNT_POINT "/f%d.json", id);
 
-  struct fs_file_t file;
-  fs_file_t_init(&file);
-  if (fs_open(&file, path, FS_O_CREATE | FS_O_WRITE) != 0)
-    return -EIO;
-  fs_write(&file, buf, len);
-  fs_close(&file);
+    char buf[256];
+    int ret = json_obj_encode_buf(finger_descr, ARRAY_SIZE(finger_descr),
+                                  data, buf, sizeof(buf));
+    if (ret < 0) {
+        return ret;
+    }
 
-  return 0;
+    size_t len = strlen(buf);
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, path, FS_O_CREATE | FS_O_WRITE) != 0) {
+        return -EIO;
+    }
+    fs_write(&file, buf, len);
+    fs_close(&file);
+
+    return 0;
 }
-/* More storage methods will follow */
+
+int touchpass_delete_finger(uint16_t id) {
+    if (!storage_mounted) {
+        return -ENODEV;
+    }
+
+    char path[48];
+    snprintf(path, sizeof(path), TP_MNT_POINT "/f%d.json", id);
+    return fs_unlink(path);
+}

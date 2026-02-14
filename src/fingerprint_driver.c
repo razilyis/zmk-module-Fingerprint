@@ -155,9 +155,14 @@ int touchpass_init(void) {
   if (!device_is_ready(uart_dev)) {
     LOG_ERR("UART device not ready");
     uart_dev = NULL;
-    // Return 0 to avoid fatal SYS_INIT failure
-    return 0;
   }
+
+#ifdef CONFIG_FILE_SYSTEM
+  int rc = touchpass_storage_init();
+  if (rc != 0) {
+    LOG_WRN("TouchPass storage init failed: %d (non-fatal)", rc);
+  }
+#endif
 
   LOG_INF("TouchPass driver initialized (Handshake deferred)");
   return 0;
