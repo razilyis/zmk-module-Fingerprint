@@ -3,7 +3,7 @@
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zmk/behaviors.h>
+#include <zmk/behavior.h>
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
 #include <zmk/keys.h>
