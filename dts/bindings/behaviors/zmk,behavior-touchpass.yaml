@@ -2,7 +2,7 @@ description: TouchPass Fingerprint Behavior
 
 compatible: "zmk,behavior-touchpass"
 
-include: [base.yaml]
+include: zero_param.yaml
 
 properties:
   "#binding-cells":

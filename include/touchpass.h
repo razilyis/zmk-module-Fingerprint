@@ -1,11 +1,11 @@
 #ifndef TOUCHPASS_H
 #define TOUCHPASS_H
 
-#include <zephyr/kernel.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <zephyr/kernel.h>
 
 /* R502-A Constants */
 #define FP_HEADER 0xEF01
@@ -41,19 +41,34 @@
 
 /* Data Structures */
 typedef struct {
-    char name[32];
-    char password[64];
-    bool press_enter;
-    int finger_id;
+  char name[32];
+  char password[64];
+  bool press_enter;
+  int finger_id;
 } finger_data_t;
 
 /* Public API */
 int touchpass_init(void);
 int touchpass_authenticate(finger_data_t *data);
-int touchpass_enroll_start(const char *name, const char *password, bool press_enter, int finger_id);
+int touchpass_enroll_start(const char *name, const char *password,
+                           bool press_enter, int finger_id);
 int touchpass_enroll_step(void);
 void touchpass_enroll_cancel(void);
 int touchpass_delete_finger(uint16_t id);
 int touchpass_get_finger(uint16_t id, finger_data_t *data);
+
+static inline uint8_t ascii_to_hid_usage(char c) {
+  if (c >= 'a' && c <= 'z')
+    return 0x04 + (c - 'a');
+  if (c >= 'A' && c <= 'Z')
+    return 0x04 + (c - 'A');
+  if (c >= '1' && c <= '9')
+    return 0x1E + (c - '1');
+  if (c == '0')
+    return 0x27;
+  if (c == ' ')
+    return 0x2C;
+  return 0;
+}
 
 #endif /* TOUCHPASS_H */
