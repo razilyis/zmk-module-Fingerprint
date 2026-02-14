@@ -26,7 +26,7 @@ manifest:
       url-base: https://github.com/razilyis
 
   projects:
-    - name: zmk-module-touchpass
+    - name: zmk-module-TouchPass
       remote: TouchPass # 指紋センサーモジュールを指定
       revision: main
 ```
