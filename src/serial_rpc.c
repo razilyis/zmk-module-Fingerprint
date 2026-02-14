@@ -8,10 +8,10 @@ LOG_MODULE_REGISTER(touchpass_rpc, CONFIG_ZMK_LOG_LEVEL);
 #ifdef CONFIG_ZMK_TOUCHPASS_SERIAL_RPC
 
 static void rpc_thread(void *p1, void *p2, void *p3) {
-  usb_enable(NULL);
-  const struct device *dev = device_get_binding("CDC_ACM_0");
-  if (!dev) {
-    LOG_ERR("CDC_ACM_0 not found for RPC");
+  const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(cdc_acm_uart0));
+
+  if (!device_is_ready(dev)) {
+    LOG_ERR("CDC ACM device not ready for RPC");
     return;
   }
 
@@ -25,6 +25,6 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
   }
 }
 
-K_THREAD_DEFINE(tp_rpc_tid, 2048, rpc_thread, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(tp_rpc_tid, 4096, rpc_thread, NULL, NULL, NULL, 5, 0, 2000);
 
 #endif
