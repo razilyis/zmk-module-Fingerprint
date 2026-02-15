@@ -457,7 +457,8 @@ static void cmd_get_detect(const char *params, int id) {
   snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
            "\"score\":%d,\"status\":\"%s\"}",
-           detected ? "true" : "false", "false", "", 0, last_status);
+           detected ? "true" : "false", detected ? "true" : "false", "", 0,
+           last_status);
   rpc_send_ok(id, data_buf);
 }
 
