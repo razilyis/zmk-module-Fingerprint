@@ -43,6 +43,7 @@
 /* Enrollment States */
 enum enroll_state {
   ENROLL_IDLE,
+  ENROLL_START_REQUESTED,
   ENROLL_CAPTURE_1,
   ENROLL_LIFT_1,
   ENROLL_CAPTURE_2,
@@ -90,6 +91,9 @@ bool touchpass_enroll_is_done(void);
 bool touchpass_enroll_was_successful(void);
 const char *touchpass_enroll_get_message(void);
 const char *touchpass_enroll_get_name(void);
+
+/* Detection polling (non-blocking, for RPC idle loop) */
+int touchpass_poll_detection(void);
 
 /* Storage API (available when CONFIG_NVS is enabled) */
 int touchpass_storage_init(void);

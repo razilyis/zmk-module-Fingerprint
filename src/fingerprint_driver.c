@@ -14,6 +14,11 @@ static uint8_t rx_buf[512];
 static uint16_t rx_idx = 0;
 static bool sensor_ready;
 
+/* Mutex protecting all sensor UART (uart0) access.
+ * Required because sensor_init_thread, enroll_thread, and RPC thread
+ * all call send_packet/receive_packet which share uart_dev and rx_buf. */
+K_MUTEX_DEFINE(sensor_mutex);
+
 /* ===== Enrollment State ===== */
 
 static enum enroll_state enroll_state = ENROLL_IDLE;
@@ -136,62 +141,92 @@ bool touchpass_is_sensor_ready(void) { return sensor_ready; }
 int touchpass_get_template_count(uint16_t *count) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_TEMPLATENUM};
   send_packet(FP_CMD_PACKET, cmd, 1);
-  if (receive_packet(2000) < 0)
-    return -ETIMEDOUT;
-  if (rx_buf[9] != 0x00)
-    return -EIO;
-  *count = (rx_buf[10] << 8) | rx_buf[11];
-  return 0;
+  int rc;
+  if (receive_packet(2000) < 0) {
+    rc = -ETIMEDOUT;
+  } else if (rx_buf[9] != 0x00) {
+    rc = -EIO;
+  } else {
+    *count = (rx_buf[10] << 8) | rx_buf[11];
+    rc = 0;
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 int touchpass_get_library_size(uint16_t *size) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_READSYSPARA};
   send_packet(FP_CMD_PACKET, cmd, 1);
-  if (receive_packet(2000) < 0)
-    return -ETIMEDOUT;
-  if (rx_buf[9] != 0x00)
-    return -EIO;
-  *size = (rx_buf[14] << 8) | rx_buf[15];
-  return 0;
+  int rc;
+  if (receive_packet(2000) < 0) {
+    rc = -ETIMEDOUT;
+  } else if (rx_buf[9] != 0x00) {
+    rc = -EIO;
+  } else {
+    *size = (rx_buf[14] << 8) | rx_buf[15];
+    rc = 0;
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 int touchpass_read_index_table(uint8_t page, uint8_t *table) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_READINDEXTABLE, page};
   send_packet(FP_CMD_PACKET, cmd, 2);
-  if (receive_packet(2000) < 0)
-    return -ETIMEDOUT;
-  if (rx_buf[9] != 0x00)
-    return -EIO;
-  memcpy(table, &rx_buf[10], 32);
-  return 0;
+  int rc;
+  if (receive_packet(2000) < 0) {
+    rc = -ETIMEDOUT;
+  } else if (rx_buf[9] != 0x00) {
+    rc = -EIO;
+  } else {
+    memcpy(table, &rx_buf[10], 32);
+    rc = 0;
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 int touchpass_delete_template(uint16_t id, uint16_t count) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_DELETCHAR, (uint8_t)(id >> 8), (uint8_t)(id & 0xFF),
                    (uint8_t)(count >> 8), (uint8_t)(count & 0xFF)};
   send_packet(FP_CMD_PACKET, cmd, 5);
-  if (receive_packet(2000) < 0)
-    return -ETIMEDOUT;
-  return rx_buf[9];
+  int rc;
+  if (receive_packet(2000) < 0) {
+    rc = -ETIMEDOUT;
+  } else {
+    rc = rx_buf[9];
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 int touchpass_set_led(uint8_t ctrl, uint8_t speed, uint8_t color,
                       uint8_t times) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_AURALEDCONFIG, ctrl, speed, color, times};
   send_packet(FP_CMD_PACKET, cmd, 5);
-  if (receive_packet(1000) < 0)
-    return -ETIMEDOUT;
-  return rx_buf[9];
+  int rc;
+  if (receive_packet(1000) < 0) {
+    rc = -ETIMEDOUT;
+  } else {
+    rc = rx_buf[9];
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 static int find_empty_slot(uint16_t lib_size) {
@@ -217,14 +252,22 @@ static int find_empty_slot(uint16_t lib_size) {
 /* ===== Authentication ===== */
 
 int touchpass_authenticate(finger_data_t *data) {
-  if (capture_image() != 0x00)
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
+  if (capture_image() != 0x00) {
+    k_mutex_unlock(&sensor_mutex);
     return -EAGAIN;
+  }
 
-  if (generate_char(1) != 0x00)
+  if (generate_char(1) != 0x00) {
+    k_mutex_unlock(&sensor_mutex);
     return -EIO;
+  }
 
   uint16_t match_id;
-  if (search_finger(&match_id) == 0) {
+  int rc = search_finger(&match_id);
+  k_mutex_unlock(&sensor_mutex);
+
+  if (rc == 0) {
 #ifdef CONFIG_NVS
     return touchpass_get_finger(match_id, data);
 #else
@@ -255,33 +298,12 @@ static bool enroll_capture_to_buffer(uint8_t buf_num) {
   return true;
 }
 
-static bool is_finger_lifted(void) {
-  return capture_image() != 0x00;
-}
+static bool is_finger_lifted(void) { return capture_image() != 0x00; }
 
 int touchpass_enroll_start(const char *name, const char *password,
                            bool press_enter, int finger_id) {
   if (!uart_dev)
     return -ENODEV;
-
-  uint16_t lib_size = 200;
-  touchpass_get_library_size(&lib_size);
-
-#ifdef CONFIG_NVS
-  for (uint16_t i = 0; i < lib_size; i++) {
-    finger_data_t existing;
-    if (touchpass_get_finger(i, &existing) == 0 &&
-        existing.finger_id == finger_id) {
-      touchpass_delete_template(i, 1);
-      touchpass_delete_finger(i);
-      break;
-    }
-  }
-#endif
-
-  int slot = find_empty_slot(lib_size);
-  if (slot < 0)
-    return -ENOMEM;
 
   strncpy(enroll_name, name, sizeof(enroll_name) - 1);
   enroll_name[sizeof(enroll_name) - 1] = '\0';
@@ -289,16 +311,12 @@ int touchpass_enroll_start(const char *name, const char *password,
   enroll_password[sizeof(enroll_password) - 1] = '\0';
   enroll_press_enter = press_enter;
   enroll_finger_id = finger_id;
-  enroll_slot = slot;
   enroll_success = false;
   enroll_error = "";
   enroll_timeout = k_uptime_get_32() + 60000;
 
-  enroll_state = ENROLL_CAPTURE_1;
-  touchpass_set_led(LED_BREATHING, 100, FP_LED_BLUE, 0);
-
-  LOG_INF("Enrollment started: name=%s slot=%d finger=%d", enroll_name,
-          enroll_slot, enroll_finger_id);
+  LOG_INF("Enrollment start requested: %s", enroll_name);
+  enroll_state = ENROLL_START_REQUESTED;
   return 0;
 }
 
@@ -307,6 +325,7 @@ int touchpass_enroll_step(void) {
     return 0;
 
   if (k_uptime_get_32() > enroll_timeout) {
+    LOG_WRN("Enrollment timeout reached");
     enroll_error = "Timeout";
     enroll_success = false;
     enroll_state = ENROLL_DONE;
@@ -315,8 +334,33 @@ int touchpass_enroll_step(void) {
   }
 
   switch (enroll_state) {
+  case ENROLL_START_REQUESTED: {
+    uint16_t lib_size = 200;
+    touchpass_get_library_size(&lib_size);
+#ifdef CONFIG_NVS
+    for (uint16_t i = 0; i < lib_size; i++) {
+      finger_data_t existing;
+      if (touchpass_get_finger(i, &existing) == 0 &&
+          existing.finger_id == enroll_finger_id) {
+        touchpass_delete_template(i, 1);
+        touchpass_delete_finger(i);
+        break;
+      }
+    }
+#endif
+    enroll_slot = find_empty_slot(lib_size);
+    if (enroll_slot < 0) {
+      enroll_error = "Library full";
+      enroll_state = ENROLL_DONE;
+      return -ENOMEM;
+    }
+    enroll_state = ENROLL_CAPTURE_1;
+    touchpass_set_led(LED_BREATHING, 100, FP_LED_BLUE, 0);
+    LOG_INF("Async enrollment setup complete, slot: %d", enroll_slot);
+  } break;
   case ENROLL_CAPTURE_1:
     if (enroll_capture_to_buffer(1)) {
+      LOG_INF("Capture 1 success, waiting for lift...");
       enroll_state = ENROLL_LIFT_1;
       touchpass_set_led(LED_FLASHING, 100, FP_LED_GREEN, 2);
     }
@@ -409,10 +453,10 @@ int touchpass_enroll_step(void) {
     touchpass_save_finger(enroll_slot, &data);
 #endif
 
+    LOG_INF("Enrollment complete: %s -> slot %d", enroll_name, enroll_slot);
     enroll_success = true;
     enroll_state = ENROLL_DONE;
     touchpass_set_led(LED_ON, 0, FP_LED_GREEN, 0);
-    LOG_INF("Enrollment complete: %s -> slot %d", enroll_name, enroll_slot);
   } break;
   default:
     break;
@@ -512,9 +556,11 @@ K_THREAD_DEFINE(tp_polling_tid, 2048, polling_thread, NULL, NULL, NULL, 7, 0,
 int touchpass_check_sensor(void) {
   if (!uart_dev)
     return -ENODEV;
+  k_mutex_lock(&sensor_mutex, K_FOREVER);
   uint8_t cmd[] = {CMD_HANDSHAKE};
   send_packet(FP_CMD_PACKET, cmd, 1);
   sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+  k_mutex_unlock(&sensor_mutex);
   if (sensor_ready) {
     LOG_INF("R502-A sensor connected");
   } else {
@@ -522,6 +568,21 @@ int touchpass_check_sensor(void) {
   }
   return sensor_ready ? 0 : -EIO;
 }
+
+/* ===== Enrollment Thread =====
+ * Runs independently to prevent blocking RPC thread during image capture. */
+static void enroll_thread(void *p1, void *p2, void *p3) {
+  while (1) {
+    if (enroll_state != ENROLL_IDLE && enroll_state != ENROLL_DONE) {
+      k_mutex_lock(&sensor_mutex, K_FOREVER);
+      touchpass_enroll_step();
+      k_mutex_unlock(&sensor_mutex);
+    }
+    k_sleep(K_MSEC(50));
+  }
+}
+
+K_THREAD_DEFINE(tp_enroll_tid, 2048, enroll_thread, NULL, NULL, NULL, 7, 0, 0);
 
 /* ===== Sensor Init Thread =====
  * Runs independently of RPC/USB — ensures sensor works in BLE-only mode.
@@ -562,6 +623,30 @@ int touchpass_init(void) {
 
   LOG_INF("TouchPass driver initialized");
   return 0;
+}
+
+int touchpass_poll_detection(void) {
+  if (!uart_dev || !sensor_ready)
+    return -ENODEV;
+  if (enroll_state != ENROLL_IDLE && enroll_state != ENROLL_DONE)
+    return -EBUSY;
+
+  /* Non-blocking trylock — skip if another thread is using the sensor */
+  if (k_mutex_lock(&sensor_mutex, K_NO_WAIT) != 0)
+    return -EBUSY;
+
+  /* Quick poll with short timeout (200ms instead of 1000ms).
+   * Sensor responds in ~50ms when present, ~100ms when absent. */
+  uint8_t cmd[] = {CMD_GENIMG};
+  send_packet(FP_CMD_PACKET, cmd, 1);
+  int rc;
+  if (receive_packet(200) < 0) {
+    rc = -ETIMEDOUT;
+  } else {
+    rc = (rx_buf[9] == 0x00) ? 0 : -ENODATA;
+  }
+  k_mutex_unlock(&sensor_mutex);
+  return rc;
 }
 
 static int touchpass_pre_init(void) { return touchpass_init(); }
