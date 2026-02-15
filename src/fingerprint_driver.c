@@ -604,6 +604,19 @@ const char *touchpass_enroll_get_name(void) { return enroll_name; }
 static void polling_thread(void *p1, void *p2, void *p3) {
   LOG_INF("TouchPass continuous polling thread started");
   while (1) {
+    /* Enrollment and background auth both use the same sensor capture flow.
+     * Suspend always-on polling while enrollment is active to avoid
+     * contention and capture sequence corruption. */
+    if (enroll_state != ENROLL_IDLE && enroll_state != ENROLL_DONE) {
+      k_sleep(K_MSEC(100));
+      continue;
+    }
+
+    if (!sensor_ready) {
+      k_sleep(K_MSEC(200));
+      continue;
+    }
+
     finger_data_t data;
     if (touchpass_authenticate(&data) == 0) {
       LOG_INF("Polling: Detected %s", data.name);
