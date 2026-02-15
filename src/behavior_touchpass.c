@@ -19,27 +19,7 @@ behavior_tp_keymap_binding_pressed(struct zmk_behavior_binding *binding,
   finger_data_t data;
   if (touchpass_authenticate(&data) == 0) {
     LOG_INF("Authentication successful for %s", data.name);
-
-    // Type the password
-    for (int i = 0; data.password[i] != '\0'; i++) {
-      uint8_t usage = ascii_to_hid_usage(data.password[i]);
-      if (usage) {
-        zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
-        zmk_endpoints_send_report(HID_USAGE_KEY);
-        zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
-        zmk_endpoints_send_report(HID_USAGE_KEY);
-      }
-      k_sleep(K_MSEC(10));
-    }
-
-    if (data.press_enter) {
-      zmk_hid_keyboard_press(
-          ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
-      zmk_endpoints_send_report(HID_USAGE_KEY);
-      zmk_hid_keyboard_release(
-          ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
-      zmk_endpoints_send_report(HID_USAGE_KEY);
-    }
+    touchpass_type_password(&data);
   } else {
     LOG_WRN("Authentication failed or timed out");
   }

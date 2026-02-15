@@ -46,6 +46,7 @@ static uint16_t cached_count;
 static uint16_t cached_capacity = 200;
 static uint32_t last_sensor_refresh;
 static uint32_t last_tx_time;
+static bool detect_latched;
 
 /* ===== UART I/O ===== */
 
@@ -404,31 +405,60 @@ static void cmd_diagnostics(const char *params, int id) {
 
 static void cmd_get_detect(const char *params, int id) {
   int rc = touchpass_poll_detection();
-  bool detected = (rc == 0);
+  bool detected = false;
+  bool matched = false;
+  int score = 0;
+  char finger_name[32] = "";
 
   if (rc == 0) {
-    strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
-  } else if (rc == -ENODATA) {
-    strncpy(last_status, "No Finger", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
-  } else if (rc == -EBUSY) {
-    strncpy(last_status, "Sensor Busy", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
-  } else if (rc == -ENODEV) {
-    strncpy(last_status, "Sensor Not Ready", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
-  } else if (rc == -ETIMEDOUT) {
-    strncpy(last_status, "Sensor Timeout", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
+    if (detect_latched) {
+      strncpy(last_status, "Finger Held", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    } else {
+      finger_data_t data;
+      int auth_rc = touchpass_authenticate(&data);
+      if (auth_rc == 0) {
+        (void)touchpass_type_password(&data);
+        detected = true;
+        matched = true;
+        score = 100;
+        strncpy(finger_name, data.name, sizeof(finger_name) - 1);
+        finger_name[sizeof(finger_name) - 1] = '\0';
+        strncpy(last_status, "Authenticated", sizeof(last_status) - 1);
+        last_status[sizeof(last_status) - 1] = '\0';
+      } else {
+        detected = true;
+        matched = false;
+        strncpy(last_status, "Unknown Finger", sizeof(last_status) - 1);
+        last_status[sizeof(last_status) - 1] = '\0';
+      }
+      detect_latched = true;
+    }
   } else {
-    strncpy(last_status, "Sensor Error", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
+    detect_latched = false;
+    if (rc == -ENODATA) {
+      strncpy(last_status, "No Finger", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    } else if (rc == -EBUSY) {
+      strncpy(last_status, "Sensor Busy", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    } else if (rc == -ENODEV) {
+      strncpy(last_status, "Sensor Not Ready", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    } else if (rc == -ETIMEDOUT) {
+      strncpy(last_status, "Sensor Timeout", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    } else {
+      strncpy(last_status, "Sensor Error", sizeof(last_status) - 1);
+      last_status[sizeof(last_status) - 1] = '\0';
+    }
   }
 
   snprintf(data_buf, sizeof(data_buf),
-           "{\"ok\":true,\"detected\":%s,\"status\":\"%s\"}",
-           detected ? "true" : "false", last_status);
+           "{\"ok\":true,\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
+           "\"score\":%d,\"status\":\"%s\"}",
+           detected ? "true" : "false", matched ? "true" : "false",
+           finger_name, score, last_status);
   rpc_send_ok(id, data_buf);
 }
 

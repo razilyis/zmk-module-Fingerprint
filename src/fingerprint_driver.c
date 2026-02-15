@@ -286,6 +286,31 @@ int touchpass_authenticate(finger_data_t *data) {
   return -EACCES;
 }
 
+int touchpass_type_password(const finger_data_t *data) {
+  if (!data)
+    return -EINVAL;
+
+  for (int i = 0; data->password[i] != '\0'; i++) {
+    uint8_t usage = ascii_to_hid_usage(data->password[i]);
+    if (usage) {
+      zmk_hid_keyboard_press(usage);
+      zmk_endpoints_send_report(HID_USAGE_KEY);
+      zmk_hid_keyboard_release(usage);
+      zmk_endpoints_send_report(HID_USAGE_KEY);
+    }
+    k_sleep(K_MSEC(10));
+  }
+
+  if (data->press_enter) {
+    zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+    zmk_endpoints_send_report(HID_USAGE_KEY);
+    zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+    zmk_endpoints_send_report(HID_USAGE_KEY);
+  }
+
+  return 0;
+}
+
 /* ===== Enrollment ===== */
 
 static bool enroll_capture_to_buffer(uint8_t buf_num) {
@@ -544,22 +569,7 @@ static void polling_thread(void *p1, void *p2, void *p3) {
     finger_data_t data;
     if (touchpass_authenticate(&data) == 0) {
       LOG_INF("Polling: Detected %s", data.name);
-      for (int i = 0; data.password[i] != '\0'; i++) {
-        uint8_t usage = ascii_to_hid_usage(data.password[i]);
-        if (usage) {
-          zmk_hid_keyboard_press(usage);
-          zmk_endpoints_send_report(HID_USAGE_KEY);
-          zmk_hid_keyboard_release(usage);
-          zmk_endpoints_send_report(HID_USAGE_KEY);
-        }
-        k_sleep(K_MSEC(10));
-      }
-      if (data.press_enter) {
-        zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
-        zmk_endpoints_send_report(HID_USAGE_KEY);
-        zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
-        zmk_endpoints_send_report(HID_USAGE_KEY);
-      }
+      touchpass_type_password(&data);
       k_sleep(K_MSEC(2000));
     }
     k_sleep(K_MSEC(200));
