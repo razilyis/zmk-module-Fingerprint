@@ -523,6 +523,26 @@ int touchpass_check_sensor(void) {
   return sensor_ready ? 0 : -EIO;
 }
 
+/* ===== Sensor Init Thread =====
+ * Runs independently of RPC/USB — ensures sensor works in BLE-only mode.
+ * Retries handshake every 5s until sensor responds. */
+
+static void sensor_init_thread(void *p1, void *p2, void *p3) {
+  /* R502-A needs ~1.5s to boot after power-on */
+  k_sleep(K_MSEC(2000));
+
+  for (int attempt = 0; attempt < 12; attempt++) {
+    if (touchpass_check_sensor() == 0) {
+      return;
+    }
+    k_sleep(K_MSEC(5000));
+  }
+  LOG_WRN("Sensor init thread: gave up after 60s");
+}
+
+K_THREAD_DEFINE(tp_sensor_init_tid, 1024, sensor_init_thread, NULL, NULL, NULL,
+                8, 0, 0);
+
 /* ===== Init ===== */
 
 int touchpass_init(void) {
@@ -532,8 +552,6 @@ int touchpass_init(void) {
     uart_dev = NULL;
     sensor_ready = false;
   }
-  /* Sensor handshake is deferred — R502-A needs time to boot.
-   * touchpass_check_sensor() is called from the RPC thread after delay. */
 
 #ifdef CONFIG_NVS
   int rc = touchpass_storage_init();
@@ -542,7 +560,7 @@ int touchpass_init(void) {
   }
 #endif
 
-  LOG_INF("TouchPass driver initialized (sensor check deferred)");
+  LOG_INF("TouchPass driver initialized");
   return 0;
 }
 

@@ -474,13 +474,8 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
 
   LOG_INF("TouchPass RPC thread started");
 
-  /* Try sensor handshake (sensor should be ready after 2s+ boot delay) */
-  if (!touchpass_is_sensor_ready()) {
-    LOG_INF("Attempting sensor handshake...");
-    touchpass_check_sensor();
-  }
-
-  /* Initial cache refresh */
+  /* Sensor handshake is handled by the sensor_init_thread in
+   * fingerprint_driver.c — no need to duplicate here. */
   refresh_sensor_cache();
 
   rx_pos = 0;
@@ -511,14 +506,6 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
 
     /* Refresh sensor cache periodically (every 30s) */
     refresh_sensor_cache();
-
-    /* Retry sensor connection if not ready (every 10s) */
-    static uint32_t last_sensor_retry;
-    if (!touchpass_is_sensor_ready() &&
-        k_uptime_get_32() - last_sensor_retry > 10000) {
-      touchpass_check_sensor();
-      last_sensor_retry = k_uptime_get_32();
-    }
 
     /* Heartbeat ping (every 5s) to keep serial alive */
     static uint32_t last_heartbeat;
