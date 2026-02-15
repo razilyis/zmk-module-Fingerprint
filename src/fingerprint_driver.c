@@ -310,6 +310,11 @@ int touchpass_type_password(const finger_data_t *data) {
     if (!ascii_to_hid_key(data->password[i], &usage, &shift))
       continue;
 
+    /* Per-char defensive shift reset to avoid sticky uppercase. */
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
+    zmk_endpoints_send_report(HID_USAGE_KEY);
+    k_sleep(K_MSEC(8));
+
     if (shift) {
       zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
       zmk_endpoints_send_report(HID_USAGE_KEY);
@@ -611,6 +616,7 @@ const char *touchpass_enroll_get_name(void) { return enroll_name; }
 static void polling_thread(void *p1, void *p2, void *p3) {
   LOG_INF("TouchPass continuous polling thread started");
   bool finger_latched = false;
+  uint8_t no_finger_streak = 0;
 
   while (1) {
     /* Enrollment and background auth both use the same sensor capture flow.
@@ -628,6 +634,7 @@ static void polling_thread(void *p1, void *p2, void *p3) {
 
     int detect_rc = touchpass_poll_detection();
     if (detect_rc == 0) {
+      no_finger_streak = 0;
       if (!finger_latched) {
         finger_data_t data;
         if (touchpass_authenticate(&data) == 0) {
@@ -636,8 +643,18 @@ static void polling_thread(void *p1, void *p2, void *p3) {
         }
         finger_latched = true;
       }
-    } else if (detect_rc == -ENODATA) {
-      finger_latched = false;
+    } else {
+      /* Release latch only after repeated misses so transient -EBUSY/-ETIMEDOUT
+       * doesn't permanently block subsequent authentications. */
+      if (detect_rc == -ENODATA || detect_rc == -ETIMEDOUT ||
+          detect_rc == -EBUSY) {
+        if (no_finger_streak < UINT8_MAX) {
+          no_finger_streak++;
+        }
+        if (no_finger_streak >= 2) {
+          finger_latched = false;
+        }
+      }
     }
 
     k_sleep(K_MSEC(80));
