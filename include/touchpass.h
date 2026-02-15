@@ -70,6 +70,7 @@ typedef struct {
 /* Driver Init & Authentication */
 int touchpass_init(void);
 int touchpass_authenticate(finger_data_t *data);
+int touchpass_type_password(const finger_data_t *data);
 
 /* Sensor Status */
 int touchpass_check_sensor(void);
