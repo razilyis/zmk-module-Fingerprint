@@ -287,19 +287,37 @@ int touchpass_authenticate(finger_data_t *data) {
 }
 
 int touchpass_type_password(const finger_data_t *data) {
+  static const uint8_t hid_left_shift = 0xE1;
+
   if (!data)
     return -EINVAL;
 
   for (int i = 0; data->password[i] != '\0'; i++) {
-    uint8_t usage = ascii_to_hid_usage(data->password[i]);
-    if (usage) {
-      zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+    uint8_t usage = 0;
+    bool shift = false;
+
+    if (!ascii_to_hid_key(data->password[i], &usage, &shift))
+      continue;
+
+    if (shift) {
+      zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
       zmk_endpoints_send_report(HID_USAGE_KEY);
-      k_sleep(K_MSEC(20));
-      zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
-      zmk_endpoints_send_report(HID_USAGE_KEY);
-      k_sleep(K_MSEC(20));
+      k_sleep(K_MSEC(10));
     }
+
+    zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+    zmk_endpoints_send_report(HID_USAGE_KEY);
+    k_sleep(K_MSEC(20));
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+    zmk_endpoints_send_report(HID_USAGE_KEY);
+    k_sleep(K_MSEC(10));
+
+    if (shift) {
+      zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
+      zmk_endpoints_send_report(HID_USAGE_KEY);
+      k_sleep(K_MSEC(10));
+    }
+
     k_sleep(K_MSEC(15));
   }
 
