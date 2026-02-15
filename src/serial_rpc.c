@@ -39,8 +39,6 @@ static uint16_t rx_pos;
 static char data_buf[RPC_BUF_SIZE];
 static char rpc_frame_buf[RPC_TX_BUF_SIZE];
 
-/* Finger detection latch (for get_detect) */
-static bool finger_detected_pending;
 static char last_status[64] = "Ready";
 
 /* Cached sensor info (refreshed periodically, not on every call) */
@@ -405,10 +403,32 @@ static void cmd_diagnostics(const char *params, int id) {
 }
 
 static void cmd_get_detect(const char *params, int id) {
+  int rc = touchpass_poll_detection();
+  bool detected = (rc == 0);
+
+  if (rc == 0) {
+    strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  } else if (rc == -ENODATA) {
+    strncpy(last_status, "No Finger", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  } else if (rc == -EBUSY) {
+    strncpy(last_status, "Sensor Busy", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  } else if (rc == -ENODEV) {
+    strncpy(last_status, "Sensor Not Ready", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  } else if (rc == -ETIMEDOUT) {
+    strncpy(last_status, "Sensor Timeout", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  } else {
+    strncpy(last_status, "Sensor Error", sizeof(last_status) - 1);
+    last_status[sizeof(last_status) - 1] = '\0';
+  }
+
   snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"detected\":%s,\"status\":\"%s\"}",
-           finger_detected_pending ? "true" : "false", last_status);
-  finger_detected_pending = false;
+           detected ? "true" : "false", last_status);
   rpc_send_ok(id, data_buf);
 }
 
@@ -493,12 +513,35 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
 
   /* Sensor handshake is handled by the sensor_init_thread in
    * fingerprint_driver.c — no need to duplicate here. */
-  refresh_sensor_cache();
 
   rx_pos = 0;
   last_tx_time = k_uptime_get_32();
+  bool sensor_cache_warmup_pending = true;
+  uint32_t sensor_cache_warmup_at = 0;
+  uint32_t last_sensor_cache_tick = 0;
+  bool dtr_was_high = true;
 
   while (1) {
+    /* Detect USB CDC ACM disconnect/reconnect (DTR changes). */
+    uart_line_ctrl_get(rpc_dev, UART_LINE_CTRL_DTR, &dtr);
+    if (!dtr) {
+      if (dtr_was_high) {
+        dtr_was_high = false;
+        rx_pos = 0;
+        LOG_WRN("TouchPass RPC: host disconnected (DTR low)");
+      }
+      k_sleep(K_MSEC(100));
+      continue;
+    }
+    if (!dtr_was_high) {
+      dtr_was_high = true;
+      rx_pos = 0;
+      last_tx_time = k_uptime_get_32();
+      sensor_cache_warmup_pending = true;
+      sensor_cache_warmup_at = 0;
+      LOG_INF("TouchPass RPC: host reconnected (DTR high)");
+    }
+
     /* Read available bytes */
     uint8_t b;
     bool had_command = false;
@@ -518,6 +561,13 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
       }
     }
 
+    uint32_t now = k_uptime_get_32();
+    if (had_command && sensor_cache_warmup_pending && sensor_cache_warmup_at == 0) {
+      /* Delay initial cache warmup until after first valid command response.
+       * This prevents startup blocking from starving early RPC commands. */
+      sensor_cache_warmup_at = now + 200;
+    }
+
     /* Heartbeat ping (every 10s) to keep serial alive.
      * Only send if not currently enrolling and no activity for 30s.
      * We use a longer threshold (30s) to avoid any collision with host
@@ -526,19 +576,24 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
     bool enrolling = (touchpass_enroll_get_state() != ENROLL_IDLE &&
                       touchpass_enroll_get_state() != ENROLL_DONE);
 
-    uint32_t now = k_uptime_get_32();
     if (!enrolling && (now - last_tx_time > 30000)) {
       rpc_println("{\"ok\":true,\"ping\":true}");
     }
 
-    /* Periodic finger detection polling (every 500ms when idle) */
-    static uint32_t last_poll_time;
-    if (!enrolling && (now - last_poll_time > 500)) {
-      if (touchpass_poll_detection() == 0) {
-        finger_detected_pending = true;
-        strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
-      }
-      last_poll_time = now;
+    /* Warm up sensor cache only after first command has been handled. */
+    if (!enrolling && sensor_cache_warmup_pending && sensor_cache_warmup_at != 0 &&
+        ((int32_t)(now - sensor_cache_warmup_at) >= 0)) {
+      refresh_sensor_cache();
+      sensor_cache_warmup_pending = false;
+      last_sensor_cache_tick = now;
+    }
+
+    /* Keep cache reasonably fresh while idle (refresh_sensor_cache() has 30s
+     * internal throttling, so frequent calls here are cheap). */
+    if (!enrolling && !sensor_cache_warmup_pending &&
+        (now - last_sensor_cache_tick > 1000)) {
+      refresh_sensor_cache();
+      last_sensor_cache_tick = now;
     }
 
     k_sleep(K_MSEC(50));
