@@ -420,13 +420,8 @@ static void cmd_reboot(const char *params, int id) {
 
 static void cmd_clear_bonds(const char *params, int id) {
   LOG_WRN("RPC: Clearing all BLE bonds...");
-  int rc = zmk_ble_clear_all_bonds();
-  if (rc == 0) {
-    rpc_send_ok(id, "{\"ok\":true}");
-  } else {
-    snprintf(data_buf, sizeof(data_buf), "Failed to clear bonds (rc %d)", rc);
-    rpc_send_error(id, data_buf);
-  }
+  zmk_ble_clear_all_bonds();
+  rpc_send_ok(id, "{\"ok\":true}");
 }
 
 /* ===== Command Dispatch ===== */
