@@ -151,6 +151,11 @@ static void cmd_get_status(const char *params, int id) {
       (touchpass_enroll_get_state() != ENROLL_IDLE &&
        touchpass_enroll_get_state() != ENROLL_DONE);
 
+  /* Retry sensor handshake if not connected */
+  if (!touchpass_is_sensor_ready()) {
+    touchpass_check_sensor();
+  }
+
   touchpass_get_template_count(&count);
   touchpass_get_library_size(&capacity);
 
@@ -471,6 +476,13 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
   }
 
   LOG_INF("TouchPass RPC thread started");
+
+  /* Try sensor handshake now (sensor should be ready after 2s+ boot delay) */
+  if (!touchpass_is_sensor_ready()) {
+    LOG_INF("Attempting sensor handshake...");
+    touchpass_check_sensor();
+  }
+
   rx_pos = 0;
 
   while (1) {
