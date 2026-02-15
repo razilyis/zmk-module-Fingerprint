@@ -292,13 +292,16 @@ int touchpass_type_password(const finger_data_t *data) {
   if (!data)
     return -EINVAL;
 
-  /* Defensive clear: release all modifiers before typing to avoid a stuck
-   * modifier state on strict input targets (e.g., OS login screens). */
+  /* Defensive clear: release modifiers and common keys before typing.
+   * Some strict input targets can keep stale key state across reports. */
+  for (uint8_t usage = 0x04; usage <= 0x73; usage++) {
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+  }
   for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
     zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
   }
   zmk_endpoints_send_report(HID_USAGE_KEY);
-  k_sleep(K_MSEC(25));
+  k_sleep(K_MSEC(30));
 
   for (int i = 0; data->password[i] != '\0'; i++) {
     uint8_t usage = 0;
@@ -341,10 +344,14 @@ int touchpass_type_password(const finger_data_t *data) {
   }
 
   /* Final defensive clear for next auth cycle. */
+  for (uint8_t usage = 0x04; usage <= 0x73; usage++) {
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+  }
   for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
     zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
   }
   zmk_endpoints_send_report(HID_USAGE_KEY);
+  k_sleep(K_MSEC(20));
 
   return 0;
 }
@@ -603,6 +610,8 @@ const char *touchpass_enroll_get_name(void) { return enroll_name; }
 #ifdef CONFIG_ZMK_TOUCHPASS_ALWAYS_ON
 static void polling_thread(void *p1, void *p2, void *p3) {
   LOG_INF("TouchPass continuous polling thread started");
+  bool finger_latched = false;
+
   while (1) {
     /* Enrollment and background auth both use the same sensor capture flow.
      * Suspend always-on polling while enrollment is active to avoid
@@ -617,13 +626,21 @@ static void polling_thread(void *p1, void *p2, void *p3) {
       continue;
     }
 
-    finger_data_t data;
-    if (touchpass_authenticate(&data) == 0) {
-      LOG_INF("Polling: Detected %s", data.name);
-      touchpass_type_password(&data);
-      k_sleep(K_MSEC(2000));
+    int detect_rc = touchpass_poll_detection();
+    if (detect_rc == 0) {
+      if (!finger_latched) {
+        finger_data_t data;
+        if (touchpass_authenticate(&data) == 0) {
+          LOG_INF("Polling: Detected %s", data.name);
+          touchpass_type_password(&data);
+        }
+        finger_latched = true;
+      }
+    } else if (detect_rc == -ENODATA) {
+      finger_latched = false;
     }
-    k_sleep(K_MSEC(200));
+
+    k_sleep(K_MSEC(80));
   }
 }
 
