@@ -292,16 +292,10 @@ int touchpass_type_password(const finger_data_t *data) {
   if (!data)
     return -EINVAL;
 
-  /* Defensive clear: release modifiers and common keys before typing.
-   * Some strict input targets can keep stale key state across reports. */
-  for (uint8_t usage = 0x04; usage <= 0x73; usage++) {
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
-  }
-  for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
-  }
+  /* Start from a clean keyboard report each time. */
+  zmk_hid_keyboard_clear();
   zmk_endpoints_send_report(HID_USAGE_KEY);
-  k_sleep(K_MSEC(30));
+  k_sleep(K_MSEC(25));
 
   for (int i = 0; data->password[i] != '\0'; i++) {
     uint8_t usage = 0;
@@ -311,25 +305,25 @@ int touchpass_type_password(const finger_data_t *data) {
       continue;
 
     /* Per-char defensive shift reset to avoid sticky uppercase. */
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
+    zmk_hid_keyboard_release(hid_left_shift);
     zmk_endpoints_send_report(HID_USAGE_KEY);
     k_sleep(K_MSEC(8));
 
     if (shift) {
-      zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
+      zmk_hid_keyboard_press(hid_left_shift);
       zmk_endpoints_send_report(HID_USAGE_KEY);
       k_sleep(K_MSEC(18));
     }
 
-    zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+    zmk_hid_keyboard_press(usage);
     zmk_endpoints_send_report(HID_USAGE_KEY);
     k_sleep(K_MSEC(28));
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
+    zmk_hid_keyboard_release(usage);
     zmk_endpoints_send_report(HID_USAGE_KEY);
     k_sleep(K_MSEC(18));
 
     if (shift) {
-      zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
+      zmk_hid_keyboard_release(hid_left_shift);
       zmk_endpoints_send_report(HID_USAGE_KEY);
       k_sleep(K_MSEC(18));
     }
@@ -338,23 +332,16 @@ int touchpass_type_password(const finger_data_t *data) {
   }
 
   if (data->press_enter) {
-    zmk_hid_keyboard_press(
-        ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
+    zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
     zmk_endpoints_send_report(HID_USAGE_KEY);
     k_sleep(K_MSEC(28));
-    zmk_hid_keyboard_release(
-        ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
+    zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
     zmk_endpoints_send_report(HID_USAGE_KEY);
     k_sleep(K_MSEC(18));
   }
 
-  /* Final defensive clear for next auth cycle. */
-  for (uint8_t usage = 0x04; usage <= 0x73; usage++) {
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
-  }
-  for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
-    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
-  }
+  /* Final clear for next auth cycle. */
+  zmk_hid_keyboard_clear();
   zmk_endpoints_send_report(HID_USAGE_KEY);
   k_sleep(K_MSEC(20));
 
