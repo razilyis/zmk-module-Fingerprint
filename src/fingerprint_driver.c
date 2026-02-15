@@ -293,18 +293,23 @@ int touchpass_type_password(const finger_data_t *data) {
   for (int i = 0; data->password[i] != '\0'; i++) {
     uint8_t usage = ascii_to_hid_usage(data->password[i]);
     if (usage) {
-      zmk_hid_keyboard_press(usage);
+      zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
       zmk_endpoints_send_report(HID_USAGE_KEY);
-      zmk_hid_keyboard_release(usage);
+      k_sleep(K_MSEC(20));
+      zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
       zmk_endpoints_send_report(HID_USAGE_KEY);
+      k_sleep(K_MSEC(20));
     }
-    k_sleep(K_MSEC(10));
+    k_sleep(K_MSEC(15));
   }
 
   if (data->press_enter) {
-    zmk_hid_keyboard_press(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+    zmk_hid_keyboard_press(
+        ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
     zmk_endpoints_send_report(HID_USAGE_KEY);
-    zmk_hid_keyboard_release(HID_USAGE_KEY_KEYBOARD_RETURN_ENTER);
+    k_sleep(K_MSEC(20));
+    zmk_hid_keyboard_release(
+        ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
     zmk_endpoints_send_report(HID_USAGE_KEY);
   }
 
