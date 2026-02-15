@@ -664,12 +664,13 @@ int touchpass_poll_detection(void) {
   if (k_mutex_lock(&sensor_mutex, K_NO_WAIT) != 0)
     return -EBUSY;
 
-  /* Quick poll with short timeout (200ms instead of 1000ms).
-   * Sensor responds in ~50ms when present, ~100ms when absent. */
+  /* Quick poll with reduced timeout.
+   * 200ms was too aggressive on some setups and caused frequent
+   * false "Sensor Timeout" during normal finger placement. */
   uint8_t cmd[] = {CMD_GENIMG};
   send_packet(FP_CMD_PACKET, cmd, 1);
   int rc;
-  if (receive_packet(200) < 0) {
+  if (receive_packet(600) < 0) {
     rc = -ETIMEDOUT;
   } else {
     rc = (rx_buf[9] == 0x00) ? 0 : -ENODATA;

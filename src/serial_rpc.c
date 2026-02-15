@@ -103,6 +103,31 @@ static int json_find_int(const char *json, const char *key, int def) {
   return def;
 }
 
+/* For request envelope fields (e.g. top-level "id"), use the last occurrence
+ * so nested params objects do not override it. */
+static int json_find_last_int(const char *json, const char *key, int def) {
+  char search[48];
+  snprintf(search, sizeof(search), "\"%s\":", key);
+
+  const char *last = NULL;
+  const char *p = json;
+  while ((p = strstr(p, search)) != NULL) {
+    last = p + strlen(search);
+    p += strlen(search);
+  }
+
+  if (!last)
+    return def;
+
+  while (*last == ' ')
+    last++;
+
+  if (*last == '-' || (*last >= '0' && *last <= '9'))
+    return atoi(last);
+
+  return def;
+}
+
 static bool json_find_bool(const char *json, const char *key, bool def) {
   char search[48];
   snprintf(search, sizeof(search), "\"%s\":", key);
@@ -508,7 +533,7 @@ static void process_line(const char *line) {
     return;
   }
 
-  int id = json_find_int(line, "id", -1);
+  int id = json_find_last_int(line, "id", -1);
 
   for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
     if (strcmp(cmd, commands[i].name) == 0) {
