@@ -1,4 +1,4 @@
-# TouchPass ZMK Module
+# TouchPass for ZMK Module
 
 > [!NOTE]
 > 本プロジェクトは、[tobiasweissert/TouchPass](https://github.com/tobiasweissert/TouchPass) をベースに ZMK モジュールとして再構成したものです。
