@@ -16,6 +16,9 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/usb/usb_device.h>
 #include <zmk/ble.h>
+#include <zmk/endpoints.h>
+#include <zmk/events/ble_active_profile_changed.h>
+#include <zmk/usb.h>
 
 LOG_MODULE_REGISTER(touchpass_rpc, CONFIG_ZMK_LOG_LEVEL);
 
@@ -33,7 +36,8 @@ LOG_MODULE_REGISTER(touchpass_rpc, CONFIG_ZMK_LOG_LEVEL);
 static const struct device *rpc_dev;
 static char rx_line[RPC_BUF_SIZE];
 static uint16_t rx_pos;
-static char tx_buf[RPC_TX_BUF_SIZE];
+static char data_buf[RPC_BUF_SIZE];
+static char rpc_frame_buf[RPC_TX_BUF_SIZE];
 
 /* Finger detection latch (for get_detect) */
 static bool finger_detected_pending;
@@ -43,6 +47,7 @@ static char last_status[64] = "Ready";
 static uint16_t cached_count;
 static uint16_t cached_capacity = 200;
 static uint32_t last_sensor_refresh;
+static uint32_t last_tx_time;
 
 /* ===== UART I/O ===== */
 
@@ -50,6 +55,7 @@ static void rpc_write(const char *data, size_t len) {
   for (size_t i = 0; i < len; i++) {
     uart_poll_out(rpc_dev, data[i]);
   }
+  last_tx_time = k_uptime_get_32();
 }
 
 static void rpc_println(const char *str) {
@@ -119,32 +125,34 @@ static bool json_find_bool(const char *json, const char *key, bool def) {
 
 /* ===== Response Senders =====
  *
- * IMPORTANT: These stream directly to UART to avoid buffer overlap.
- * Handlers format data into tx_buf, then pass tx_buf to these functions.
- * If we used snprintf(tx_buf, ..., tx_buf) it would be undefined behavior.
+ * Handlers format data into data_buf, then pass it to these functions.
+ * Senders use rpc_frame_buf to build the final JSON-RPC wrapper.
  */
 
 static void rpc_send_ok(int id, const char *data_json) {
-  char id_buf[20];
-  rpc_write("{\"ok\":true,\"status\":\"ok\",\"data\":", 33);
-  rpc_write(data_json, strlen(data_json));
+  int pos = 0;
+  /* Trailing newline is standard, leading double newline was too aggressive */
+  pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos,
+                  "{\"ok\":true,\"status\":\"ok\",\"data\":%s", data_json);
   if (id >= 0) {
-    int len = snprintf(id_buf, sizeof(id_buf), ",\"id\":%d", id);
-    rpc_write(id_buf, len);
+    pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos,
+                    ",\"id\":%d", id);
   }
-  rpc_write("}\n", 2);
+  pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos, "}\n");
+  rpc_write(rpc_frame_buf, pos);
 }
 
 static void rpc_send_error(int id, const char *message) {
-  char id_buf[20];
-  rpc_write("{\"ok\":false,\"status\":\"error\",\"message\":\"", 42);
-  rpc_write(message, strlen(message));
-  rpc_write("\"", 1);
+  int pos = 0;
+  pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos,
+                  "{\"ok\":false,\"status\":\"error\",\"message\":\"%s\"",
+                  message);
   if (id >= 0) {
-    int len = snprintf(id_buf, sizeof(id_buf), ",\"id\":%d", id);
-    rpc_write(id_buf, len);
+    pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos,
+                    ",\"id\":%d", id);
   }
-  rpc_write("}\n", 2);
+  pos += snprintf(rpc_frame_buf + pos, sizeof(rpc_frame_buf) - pos, "}\n");
+  rpc_write(rpc_frame_buf, pos);
 }
 
 /* ===== Sensor Cache ===== */
@@ -167,23 +175,25 @@ static void cmd_ping(const char *params, int id) {
 }
 
 static void cmd_get_status(const char *params, int id) {
-  bool enrolling =
-      (touchpass_enroll_get_state() != ENROLL_IDLE &&
-       touchpass_enroll_get_state() != ENROLL_DONE);
+  bool enrolling = (touchpass_enroll_get_state() != ENROLL_IDLE &&
+                    touchpass_enroll_get_state() != ENROLL_DONE);
+
+  bool ble_connected = zmk_ble_active_profile_is_connected();
 
   /* Use cached sensor values (refreshed every 30s in main loop) */
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"sensor\":%s,\"count\":%d,\"capacity\":%d,"
-           "\"last\":\"%s\",\"enrolling\":%s,\"ble_connected\":%s}",
+           "\"last\":\"%s\",\"enrolling\":%s,\"ble_connected\":%s,"
+           "\"ble_active_profile\":%d}",
            touchpass_is_sensor_ready() ? "true" : "false", cached_count,
            cached_capacity, last_status, enrolling ? "true" : "false",
-           zmk_ble_active_profile_is_connected() ? "true" : "false");
-  rpc_send_ok(id, tx_buf);
+           ble_connected ? "true" : "false", zmk_ble_active_profile_index());
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_get_fingers(const char *params, int id) {
   int pos = 0;
-  pos += snprintf(tx_buf + pos, sizeof(tx_buf) - pos, "{\"fingers\":[");
+  pos += snprintf(data_buf + pos, sizeof(data_buf) - pos, "{\"fingers\":[");
 
 #ifdef CONFIG_NVS
   if (touchpass_is_sensor_ready()) {
@@ -192,10 +202,10 @@ static void cmd_get_fingers(const char *params, int id) {
 
     uint16_t total_pages = (cached_capacity + 255) / 256;
     for (uint8_t page = 0;
-         page < total_pages && pos < (int)sizeof(tx_buf) - 128; page++) {
+         page < total_pages && pos < (int)sizeof(data_buf) - 128; page++) {
       if (touchpass_read_index_table(page, index_table) != 0)
         continue;
-      for (int i = 0; i < 32 && pos < (int)sizeof(tx_buf) - 128; i++) {
+      for (int i = 0; i < 32 && pos < (int)sizeof(data_buf) - 128; i++) {
         uint8_t byte_val = index_table[i];
         for (int bit = 0; bit < 8; bit++) {
           if (byte_val & (1 << bit)) {
@@ -205,9 +215,9 @@ static void cmd_get_fingers(const char *params, int id) {
             finger_data_t data;
             if (touchpass_get_finger(slot, &data) == 0) {
               if (!first)
-                tx_buf[pos++] = ',';
+                data_buf[pos++] = ',';
               first = false;
-              pos += snprintf(tx_buf + pos, sizeof(tx_buf) - pos,
+              pos += snprintf(data_buf + pos, sizeof(data_buf) - pos,
                               "{\"id\":%d,\"name\":\"%s\",\"fingerId\":%d,"
                               "\"pressEnter\":%s}",
                               slot, data.name, data.finger_id,
@@ -220,8 +230,8 @@ static void cmd_get_fingers(const char *params, int id) {
   }
 #endif
 
-  snprintf(tx_buf + pos, sizeof(tx_buf) - pos, "]}");
-  rpc_send_ok(id, tx_buf);
+  snprintf(data_buf + pos, sizeof(data_buf) - pos, "]}");
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_get_finger(const char *params, int id) {
@@ -238,12 +248,12 @@ static void cmd_get_finger(const char *params, int id) {
     return;
   }
 
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"id\":%d,\"name\":\"%s\",\"hasPassword\":%s,"
            "\"pressEnter\":%s,\"fingerId\":%d}",
            slot, data.name, (data.password[0] != '\0') ? "true" : "false",
            data.press_enter ? "true" : "false", data.finger_id);
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 #else
   rpc_send_error(id, "Storage not available");
 #endif
@@ -338,12 +348,12 @@ static void cmd_enroll_status(const char *params, int id) {
     captured = true;
   }
 
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"step\":%d,\"message\":\"%s\",\"done\":%s,\"captured\":%s,"
            "\"ok\":%s,\"name\":\"%s\",\"status\":\"%s\"}",
            step, msg, done ? "true" : "false", captured ? "true" : "false",
            ok ? "true" : "false", name, msg);
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_enroll_cancel(const char *params, int id) {
@@ -354,21 +364,21 @@ static void cmd_enroll_cancel(const char *params, int id) {
 static void cmd_get_ble_status(const char *params, int id) {
   bool connected = zmk_ble_active_profile_is_connected();
 
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"status\":\"%s\",\"connected\":%s,\"mode\":\"BLE\","
            "\"name\":\"TouchPass\"}",
            connected ? "connected" : "advertising",
            connected ? "true" : "false");
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_get_keyboard_mode(const char *params, int id) {
   bool connected = zmk_ble_active_profile_is_connected();
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"current\":\"BLE\",\"availableModes\":[\"BLE\"],"
            "\"saved\":\"BLE\",\"connected\":%s}",
            connected ? "true" : "false");
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_set_keyboard_mode(const char *params, int id) {
@@ -376,36 +386,47 @@ static void cmd_set_keyboard_mode(const char *params, int id) {
 }
 
 static void cmd_get_system_info(const char *params, int id) {
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"version\":\"%s\",\"platform\":\"%s\",\"chip\":\"%s\","
            "\"cpu_freq\":64,\"flash_size\":1024}",
            FIRMWARE_VERSION, PLATFORM_NAME, PLATFORM_NAME);
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_diagnostics(const char *params, int id) {
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"platform\":\"%s\",\"firmware\":\"%s\","
            "\"uart1\":{\"rxPin\":7,\"txPin\":6,\"baud\":57600},"
            "\"usb\":{\"hid\":true,\"serial\":true,\"mode\":\"ble\"},"
            "\"sensor\":{\"connected\":%s}}",
            PLATFORM_NAME, FIRMWARE_VERSION,
            touchpass_is_sensor_ready() ? "true" : "false");
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_get_detect(const char *params, int id) {
-  snprintf(tx_buf, sizeof(tx_buf),
+  snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"detected\":%s,\"status\":\"%s\"}",
            finger_detected_pending ? "true" : "false", last_status);
   finger_detected_pending = false;
-  rpc_send_ok(id, tx_buf);
+  rpc_send_ok(id, data_buf);
 }
 
 static void cmd_reboot(const char *params, int id) {
   rpc_send_ok(id, "{\"ok\":true}");
   k_sleep(K_MSEC(500));
   sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void cmd_clear_bonds(const char *params, int id) {
+  LOG_WRN("RPC: Clearing all BLE bonds...");
+  int rc = zmk_ble_clear_all_bonds();
+  if (rc == 0) {
+    rpc_send_ok(id, "{\"ok\":true}");
+  } else {
+    snprintf(data_buf, sizeof(data_buf), "Failed to clear bonds (rc %d)", rc);
+    rpc_send_error(id, data_buf);
+  }
 }
 
 /* ===== Command Dispatch ===== */
@@ -432,6 +453,7 @@ static const struct rpc_command commands[] = {
     {"diagnostics", cmd_diagnostics},
     {"get_detect", cmd_get_detect},
     {"reboot", cmd_reboot},
+    {"clear_bonds", cmd_clear_bonds},
 };
 
 static void process_line(const char *line) {
@@ -479,16 +501,19 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
   refresh_sensor_cache();
 
   rx_pos = 0;
+  last_tx_time = k_uptime_get_32();
 
   while (1) {
     /* Read available bytes */
     uint8_t b;
+    bool had_command = false;
     while (uart_poll_in(rpc_dev, &b) == 0) {
       if (b == '\n' || b == '\r') {
         if (rx_pos > 0) {
           rx_line[rx_pos] = '\0';
           process_line(rx_line);
           rx_pos = 0;
+          had_command = true;
         }
       } else if (rx_pos < sizeof(rx_line) - 1) {
         rx_line[rx_pos++] = b;
@@ -498,20 +523,27 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
       }
     }
 
-    /* Process enrollment steps if active */
-    enum enroll_state state = touchpass_enroll_get_state();
-    if (state != ENROLL_IDLE && state != ENROLL_DONE) {
-      touchpass_enroll_step();
+    /* Heartbeat ping (every 10s) to keep serial alive.
+     * Only send if not currently enrolling and no activity for 30s.
+     * We use a longer threshold (30s) to avoid any collision with host
+     * commands.
+     */
+    bool enrolling = (touchpass_enroll_get_state() != ENROLL_IDLE &&
+                      touchpass_enroll_get_state() != ENROLL_DONE);
+
+    uint32_t now = k_uptime_get_32();
+    if (!enrolling && (now - last_tx_time > 30000)) {
+      rpc_println("{\"ok\":true,\"ping\":true}");
     }
 
-    /* Refresh sensor cache periodically (every 30s) */
-    refresh_sensor_cache();
-
-    /* Heartbeat ping (every 5s) to keep serial alive */
-    static uint32_t last_heartbeat;
-    if (k_uptime_get_32() - last_heartbeat > 5000) {
-      rpc_println("{\"ok\":true,\"ping\":true}");
-      last_heartbeat = k_uptime_get_32();
+    /* Periodic finger detection polling (every 500ms when idle) */
+    static uint32_t last_poll_time;
+    if (!enrolling && (now - last_poll_time > 500)) {
+      if (touchpass_poll_detection() == 0) {
+        finger_detected_pending = true;
+        strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
+      }
+      last_poll_time = now;
     }
 
     k_sleep(K_MSEC(50));
