@@ -292,6 +292,14 @@ int touchpass_type_password(const finger_data_t *data) {
   if (!data)
     return -EINVAL;
 
+  /* Defensive clear: release all modifiers before typing to avoid a stuck
+   * modifier state on strict input targets (e.g., OS login screens). */
+  for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
+  }
+  zmk_endpoints_send_report(HID_USAGE_KEY);
+  k_sleep(K_MSEC(25));
+
   for (int i = 0; data->password[i] != '\0'; i++) {
     uint8_t usage = 0;
     bool shift = false;
@@ -302,34 +310,41 @@ int touchpass_type_password(const finger_data_t *data) {
     if (shift) {
       zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
       zmk_endpoints_send_report(HID_USAGE_KEY);
-      k_sleep(K_MSEC(10));
+      k_sleep(K_MSEC(18));
     }
 
     zmk_hid_keyboard_press(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
     zmk_endpoints_send_report(HID_USAGE_KEY);
-    k_sleep(K_MSEC(20));
+    k_sleep(K_MSEC(28));
     zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, usage));
     zmk_endpoints_send_report(HID_USAGE_KEY);
-    k_sleep(K_MSEC(10));
+    k_sleep(K_MSEC(18));
 
     if (shift) {
       zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, hid_left_shift));
       zmk_endpoints_send_report(HID_USAGE_KEY);
-      k_sleep(K_MSEC(10));
+      k_sleep(K_MSEC(18));
     }
 
-    k_sleep(K_MSEC(15));
+    k_sleep(K_MSEC(22));
   }
 
   if (data->press_enter) {
     zmk_hid_keyboard_press(
         ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
     zmk_endpoints_send_report(HID_USAGE_KEY);
-    k_sleep(K_MSEC(20));
+    k_sleep(K_MSEC(28));
     zmk_hid_keyboard_release(
         ZMK_HID_USAGE(HID_USAGE_KEY, HID_USAGE_KEY_KEYBOARD_RETURN_ENTER));
     zmk_endpoints_send_report(HID_USAGE_KEY);
+    k_sleep(K_MSEC(18));
   }
+
+  /* Final defensive clear for next auth cycle. */
+  for (uint8_t mod = 0xE0; mod <= 0xE7; mod++) {
+    zmk_hid_keyboard_release(ZMK_HID_USAGE(HID_USAGE_KEY, mod));
+  }
+  zmk_endpoints_send_report(HID_USAGE_KEY);
 
   return 0;
 }
