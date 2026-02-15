@@ -39,6 +39,11 @@ static char tx_buf[RPC_TX_BUF_SIZE];
 static bool finger_detected_pending;
 static char last_status[64] = "Ready";
 
+/* Cached sensor info (refreshed periodically, not on every call) */
+static uint16_t cached_count;
+static uint16_t cached_capacity = 200;
+static uint32_t last_sensor_refresh;
+
 /* ===== UART I/O ===== */
 
 static void rpc_write(const char *data, size_t len) {
@@ -54,7 +59,6 @@ static void rpc_println(const char *str) {
 
 /* ===== Minimal JSON Helpers ===== */
 
-/* Find a string value for "key":"value" in json. Returns pointer into json. */
 static int json_find_string(const char *json, const char *key, char *out,
                             size_t out_size) {
   char search[48];
@@ -68,7 +72,7 @@ static int json_find_string(const char *json, const char *key, char *out,
   size_t i = 0;
   while (*p && *p != '"' && i < out_size - 1) {
     if (*p == '\\' && *(p + 1)) {
-      p++; /* Skip escape */
+      p++;
     }
     out[i++] = *p++;
   }
@@ -76,7 +80,6 @@ static int json_find_string(const char *json, const char *key, char *out,
   return 0;
 }
 
-/* Find an integer value for "key":N in json */
 static int json_find_int(const char *json, const char *key, int def) {
   char search[48];
   snprintf(search, sizeof(search), "\"%s\":", key);
@@ -86,7 +89,6 @@ static int json_find_int(const char *json, const char *key, int def) {
     return def;
   p += strlen(search);
 
-  /* Skip whitespace */
   while (*p == ' ')
     p++;
 
@@ -96,7 +98,6 @@ static int json_find_int(const char *json, const char *key, int def) {
   return def;
 }
 
-/* Find a bool value for "key":true/false in json */
 static bool json_find_bool(const char *json, const char *key, bool def) {
   char search[48];
   snprintf(search, sizeof(search), "\"%s\":", key);
@@ -116,27 +117,47 @@ static bool json_find_bool(const char *json, const char *key, bool def) {
   return def;
 }
 
-/* ===== Response Senders ===== */
+/* ===== Response Senders =====
+ *
+ * IMPORTANT: These stream directly to UART to avoid buffer overlap.
+ * Handlers format data into tx_buf, then pass tx_buf to these functions.
+ * If we used snprintf(tx_buf, ..., tx_buf) it would be undefined behavior.
+ */
 
 static void rpc_send_ok(int id, const char *data_json) {
-  int len = snprintf(tx_buf, sizeof(tx_buf),
-                     "{\"ok\":true,\"status\":\"ok\",\"data\":%s", data_json);
+  char id_buf[20];
+  rpc_write("{\"ok\":true,\"status\":\"ok\",\"data\":", 33);
+  rpc_write(data_json, strlen(data_json));
   if (id >= 0) {
-    len += snprintf(tx_buf + len, sizeof(tx_buf) - len, ",\"id\":%d", id);
+    int len = snprintf(id_buf, sizeof(id_buf), ",\"id\":%d", id);
+    rpc_write(id_buf, len);
   }
-  snprintf(tx_buf + len, sizeof(tx_buf) - len, "}");
-  rpc_println(tx_buf);
+  rpc_write("}\n", 2);
 }
 
 static void rpc_send_error(int id, const char *message) {
-  int len =
-      snprintf(tx_buf, sizeof(tx_buf),
-               "{\"ok\":false,\"status\":\"error\",\"message\":\"%s\"", message);
+  char id_buf[20];
+  rpc_write("{\"ok\":false,\"status\":\"error\",\"message\":\"", 42);
+  rpc_write(message, strlen(message));
+  rpc_write("\"", 1);
   if (id >= 0) {
-    len += snprintf(tx_buf + len, sizeof(tx_buf) - len, ",\"id\":%d", id);
+    int len = snprintf(id_buf, sizeof(id_buf), ",\"id\":%d", id);
+    rpc_write(id_buf, len);
   }
-  snprintf(tx_buf + len, sizeof(tx_buf) - len, "}");
-  rpc_println(tx_buf);
+  rpc_write("}\n", 2);
+}
+
+/* ===== Sensor Cache ===== */
+
+static void refresh_sensor_cache(void) {
+  if (!touchpass_is_sensor_ready())
+    return;
+  uint32_t now = k_uptime_get_32();
+  if (now - last_sensor_refresh < 30000 && last_sensor_refresh != 0)
+    return;
+  touchpass_get_template_count(&cached_count);
+  touchpass_get_library_size(&cached_capacity);
+  last_sensor_refresh = now;
 }
 
 /* ===== Command Handlers ===== */
@@ -146,69 +167,52 @@ static void cmd_ping(const char *params, int id) {
 }
 
 static void cmd_get_status(const char *params, int id) {
-  uint16_t count = 0, capacity = 200;
   bool enrolling =
       (touchpass_enroll_get_state() != ENROLL_IDLE &&
        touchpass_enroll_get_state() != ENROLL_DONE);
 
-  /* Retry sensor handshake if not connected */
-  if (!touchpass_is_sensor_ready()) {
-    touchpass_check_sensor();
-  }
-
-  touchpass_get_template_count(&count);
-  touchpass_get_library_size(&capacity);
-
-  int len = snprintf(
-      tx_buf, sizeof(tx_buf),
-      "{\"ok\":true,\"sensor\":%s,\"count\":%d,\"capacity\":%d,"
-      "\"last\":\"%s\",\"enrolling\":%s,\"ble_connected\":%s}",
-      touchpass_is_sensor_ready() ? "true" : "false", count, capacity,
-      last_status, enrolling ? "true" : "false",
-      zmk_ble_active_profile_is_connected() ? "true" : "false");
-
-  /* get_status returns data at top level (matches original) */
-  if (id >= 0) {
-    snprintf(tx_buf + len, sizeof(tx_buf) - len, "");
-  }
+  /* Use cached sensor values (refreshed every 30s in main loop) */
+  snprintf(tx_buf, sizeof(tx_buf),
+           "{\"ok\":true,\"sensor\":%s,\"count\":%d,\"capacity\":%d,"
+           "\"last\":\"%s\",\"enrolling\":%s,\"ble_connected\":%s}",
+           touchpass_is_sensor_ready() ? "true" : "false", cached_count,
+           cached_capacity, last_status, enrolling ? "true" : "false",
+           zmk_ble_active_profile_is_connected() ? "true" : "false");
   rpc_send_ok(id, tx_buf);
 }
 
 static void cmd_get_fingers(const char *params, int id) {
-  /* We need to build a JSON array of fingers.
-   * Use the index table from the sensor + NVS data. */
-  char resp[RPC_TX_BUF_SIZE];
   int pos = 0;
-  pos += snprintf(resp + pos, sizeof(resp) - pos, "{\"fingers\":[");
+  pos += snprintf(tx_buf + pos, sizeof(tx_buf) - pos, "{\"fingers\":[");
 
 #ifdef CONFIG_NVS
-  uint16_t lib_size = 200;
-  touchpass_get_library_size(&lib_size);
-  uint16_t total_pages = (lib_size + 255) / 256;
-  uint8_t index_table[32];
-  bool first = true;
+  if (touchpass_is_sensor_ready()) {
+    uint8_t index_table[32];
+    bool first = true;
 
-  for (uint8_t page = 0; page < total_pages && pos < (int)sizeof(resp) - 128;
-       page++) {
-    if (touchpass_read_index_table(page, index_table) != 0)
-      continue;
-    for (int i = 0; i < 32 && pos < (int)sizeof(resp) - 128; i++) {
-      uint8_t byte_val = index_table[i];
-      for (int bit = 0; bit < 8; bit++) {
-        if (byte_val & (1 << bit)) {
-          uint16_t slot = page * 256 + i * 8 + bit;
-          if (slot >= lib_size)
-            break;
-          finger_data_t data;
-          if (touchpass_get_finger(slot, &data) == 0) {
-            if (!first)
-              resp[pos++] = ',';
-            first = false;
-            pos += snprintf(resp + pos, sizeof(resp) - pos,
-                            "{\"id\":%d,\"name\":\"%s\",\"fingerId\":%d,"
-                            "\"pressEnter\":%s}",
-                            slot, data.name, data.finger_id,
-                            data.press_enter ? "true" : "false");
+    uint16_t total_pages = (cached_capacity + 255) / 256;
+    for (uint8_t page = 0;
+         page < total_pages && pos < (int)sizeof(tx_buf) - 128; page++) {
+      if (touchpass_read_index_table(page, index_table) != 0)
+        continue;
+      for (int i = 0; i < 32 && pos < (int)sizeof(tx_buf) - 128; i++) {
+        uint8_t byte_val = index_table[i];
+        for (int bit = 0; bit < 8; bit++) {
+          if (byte_val & (1 << bit)) {
+            uint16_t slot = page * 256 + i * 8 + bit;
+            if (slot >= cached_capacity)
+              break;
+            finger_data_t data;
+            if (touchpass_get_finger(slot, &data) == 0) {
+              if (!first)
+                tx_buf[pos++] = ',';
+              first = false;
+              pos += snprintf(tx_buf + pos, sizeof(tx_buf) - pos,
+                              "{\"id\":%d,\"name\":\"%s\",\"fingerId\":%d,"
+                              "\"pressEnter\":%s}",
+                              slot, data.name, data.finger_id,
+                              data.press_enter ? "true" : "false");
+            }
           }
         }
       }
@@ -216,8 +220,8 @@ static void cmd_get_fingers(const char *params, int id) {
   }
 #endif
 
-  snprintf(resp + pos, sizeof(resp) - pos, "]}");
-  rpc_send_ok(id, resp);
+  snprintf(tx_buf + pos, sizeof(tx_buf) - pos, "]}");
+  rpc_send_ok(id, tx_buf);
 }
 
 static void cmd_get_finger(const char *params, int id) {
@@ -259,7 +263,6 @@ static void cmd_update_finger(const char *params, int id) {
     return;
   }
 
-  /* Update fields if present in params */
   char tmp[64];
   if (json_find_string(params, "name", tmp, sizeof(tmp)) == 0) {
     strncpy(data.name, tmp, sizeof(data.name) - 1);
@@ -269,14 +272,10 @@ static void cmd_update_finger(const char *params, int id) {
     strncpy(data.password, tmp, sizeof(data.password) - 1);
     data.password[sizeof(data.password) - 1] = '\0';
   }
-  /* Check for pressEnter */
-  const char *pe = strstr(params, "\"pressEnter\":");
-  if (pe) {
+  if (strstr(params, "\"pressEnter\":")) {
     data.press_enter = json_find_bool(params, "pressEnter", data.press_enter);
   }
-  /* Check for finger */
-  const char *fi = strstr(params, "\"finger\":");
-  if (fi) {
+  if (strstr(params, "\"finger\":")) {
     data.finger_id = json_find_int(params, "finger", data.finger_id);
   }
 
@@ -436,7 +435,6 @@ static const struct rpc_command commands[] = {
 };
 
 static void process_line(const char *line) {
-  /* Extract "cmd" */
   char cmd[32];
   if (json_find_string(line, "cmd", cmd, sizeof(cmd)) != 0) {
     rpc_send_error(-1, "Missing cmd field");
@@ -445,7 +443,6 @@ static void process_line(const char *line) {
 
   int id = json_find_int(line, "id", -1);
 
-  /* Dispatch */
   for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
     if (strcmp(cmd, commands[i].name) == 0) {
       commands[i].handler(line, id);
@@ -477,11 +474,14 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
 
   LOG_INF("TouchPass RPC thread started");
 
-  /* Try sensor handshake now (sensor should be ready after 2s+ boot delay) */
+  /* Try sensor handshake (sensor should be ready after 2s+ boot delay) */
   if (!touchpass_is_sensor_ready()) {
     LOG_INF("Attempting sensor handshake...");
     touchpass_check_sensor();
   }
+
+  /* Initial cache refresh */
+  refresh_sensor_cache();
 
   rx_pos = 0;
 
@@ -498,7 +498,6 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
       } else if (rx_pos < sizeof(rx_line) - 1) {
         rx_line[rx_pos++] = b;
       } else {
-        /* Buffer overflow, reset */
         rx_pos = 0;
         rpc_send_error(-1, "Buffer overflow");
       }
@@ -508,6 +507,17 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
     enum enroll_state state = touchpass_enroll_get_state();
     if (state != ENROLL_IDLE && state != ENROLL_DONE) {
       touchpass_enroll_step();
+    }
+
+    /* Refresh sensor cache periodically (every 30s) */
+    refresh_sensor_cache();
+
+    /* Retry sensor connection if not ready (every 10s) */
+    static uint32_t last_sensor_retry;
+    if (!touchpass_is_sensor_ready() &&
+        k_uptime_get_32() - last_sensor_retry > 10000) {
+      touchpass_check_sensor();
+      last_sensor_retry = k_uptime_get_32();
     }
 
     /* Heartbeat ping (every 5s) to keep serial alive */
