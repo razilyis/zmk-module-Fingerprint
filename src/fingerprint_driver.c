@@ -507,6 +507,22 @@ K_THREAD_DEFINE(tp_polling_tid, 2048, polling_thread, NULL, NULL, NULL, 7, 0,
                 0);
 #endif
 
+/* ===== Sensor Check (can be called any time) ===== */
+
+int touchpass_check_sensor(void) {
+  if (!uart_dev)
+    return -ENODEV;
+  uint8_t cmd[] = {CMD_HANDSHAKE};
+  send_packet(FP_CMD_PACKET, cmd, 1);
+  sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+  if (sensor_ready) {
+    LOG_INF("R502-A sensor connected");
+  } else {
+    LOG_WRN("R502-A sensor not responding");
+  }
+  return sensor_ready ? 0 : -EIO;
+}
+
 /* ===== Init ===== */
 
 int touchpass_init(void) {
@@ -515,16 +531,9 @@ int touchpass_init(void) {
     LOG_ERR("UART device not ready");
     uart_dev = NULL;
     sensor_ready = false;
-  } else {
-    uint8_t cmd[] = {CMD_HANDSHAKE};
-    send_packet(FP_CMD_PACKET, cmd, 1);
-    sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
-    if (sensor_ready) {
-      LOG_INF("R502-A sensor connected");
-    } else {
-      LOG_WRN("R502-A sensor not responding (non-fatal)");
-    }
   }
+  /* Sensor handshake is deferred — R502-A needs time to boot.
+   * touchpass_check_sensor() is called from the RPC thread after delay. */
 
 #ifdef CONFIG_NVS
   int rc = touchpass_storage_init();
@@ -533,7 +542,7 @@ int touchpass_init(void) {
   }
 #endif
 
-  LOG_INF("TouchPass driver initialized");
+  LOG_INF("TouchPass driver initialized (sensor check deferred)");
   return 0;
 }
 

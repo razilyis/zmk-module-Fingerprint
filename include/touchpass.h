@@ -71,6 +71,7 @@ int touchpass_init(void);
 int touchpass_authenticate(finger_data_t *data);
 
 /* Sensor Status */
+int touchpass_check_sensor(void);
 bool touchpass_is_sensor_ready(void);
 int touchpass_get_template_count(uint16_t *count);
 int touchpass_get_library_size(uint16_t *size);
