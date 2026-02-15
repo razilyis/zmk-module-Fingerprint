@@ -66,3 +66,24 @@ int touchpass_delete_finger(uint16_t id) {
 
     return nvs_delete(&tp_nvs, id);
 }
+
+int touchpass_list_fingers(void (*cb)(uint16_t id, const finger_data_t *data,
+                                     void *user_data),
+                           void *user_data) {
+    if (!storage_ready) {
+        return -ENODEV;
+    }
+
+    finger_data_t data;
+    int found = 0;
+
+    for (uint16_t id = 0; id < 200; id++) {
+        ssize_t rc = nvs_read(&tp_nvs, id, &data, sizeof(finger_data_t));
+        if (rc > 0) {
+            cb(id, &data, user_data);
+            found++;
+        }
+    }
+
+    return found;
+}

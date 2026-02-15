@@ -35,9 +35,11 @@ config ZMK_TOUCHPASS_ALWAYS_ON
 
 config ZMK_TOUCHPASS_SERIAL_RPC
     bool "Enable Serial RPC (for config.html)"
-    default y
+    default n
+    depends on USB_CDC_ACM
     help
         Enable JSON-RPC communication over USB Serial for the web configuration tool.
+        Note: Cannot be used simultaneously with ZMK_USB_LOGGING (both use the same CDC ACM UART).
 
 # Compatibility for ZMK v0.3 / Zephyr 3.5 settings mismatch
 config SETTINGS_FS_FILE
