@@ -232,10 +232,12 @@ int touchpass_set_led(uint8_t ctrl, uint8_t speed, uint8_t color,
 static int find_empty_slot(uint16_t lib_size) {
   uint16_t total_pages = (lib_size + 255) / 256;
   uint8_t table[32];
+  bool any_page_read = false;
 
   for (uint8_t page = 0; page < total_pages; page++) {
     if (touchpass_read_index_table(page, table) != 0)
       continue;
+    any_page_read = true;
     for (int i = 0; i < 32; i++) {
       for (int bit = 0; bit < 8; bit++) {
         if (!(table[i] & (1 << bit))) {
@@ -245,6 +247,9 @@ static int find_empty_slot(uint16_t lib_size) {
         }
       }
     }
+  }
+  if (!any_page_read) {
+    return -EIO;
   }
   return -1;
 }
@@ -349,6 +354,20 @@ int touchpass_enroll_step(void) {
     }
 #endif
     enroll_slot = find_empty_slot(lib_size);
+    if (enroll_slot == -EIO) {
+      /* Some R502 variants intermittently fail READ_INDEX_TABLE even though
+       * handshake/detect still works. Fall back to template count as a best
+       * effort slot guess to keep enrollment usable. */
+      uint16_t template_count = 0;
+      if (touchpass_get_template_count(&template_count) == 0 &&
+          template_count < lib_size) {
+        enroll_slot = template_count;
+      } else {
+        enroll_error = "Index table read failed";
+        enroll_state = ENROLL_DONE;
+        return -EIO;
+      }
+    }
     if (enroll_slot < 0) {
       enroll_error = "Library full";
       enroll_state = ENROLL_DONE;
