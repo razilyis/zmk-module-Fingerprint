@@ -46,12 +46,22 @@ CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y
 # 常時待機モード（指を置くだけで入力）を有効化する場合（デフォルト: n）
 # CONFIG_ZMK_TOUCHPASS_ALWAYS_ON=y
 
-# 必要なサブシステムの有効化
+# 必要なサブシステムの有効化（NVS）
 CONFIG_USB_DEVICE_STACK=y
 CONFIG_UART_LINE_CTRL=y
 CONFIG_USB_CDC_ACM=y
 CONFIG_UART_INTERRUPT_DRIVEN=y
-CONFIG_FILE_SYSTEM=y
+CONFIG_FLASH=y
+CONFIG_FLASH_MAP=y
+CONFIG_FLASH_PAGE_LAYOUT=y
+CONFIG_SETTINGS=y
+CONFIG_NVS=y
+CONFIG_SETTINGS_NVS=y
+
+# Serial RPC を使う場合の競合回避（JSON破損防止）
+CONFIG_ZMK_USB_LOGGING=n
+CONFIG_LOG_BACKEND_UART=n
+CONFIG_UART_CONSOLE=n
 ```
 
 ### 3. デバイスツリー (.overlay) の設定
@@ -86,6 +96,28 @@ CONFIG_FILE_SYSTEM=y
     pinctrl-0 = <&uart0_default>;
     pinctrl-names = "default";
 };
+
+/* NVS partitions
+ * - touchpass_partition: 指紋データ保存用
+ * - storage_partition:   ZMK settings/BLE bonding 用
+ */
+&flash0 {
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
+
+        touchpass_partition: partition@e4000 {
+            label = "touchpass";
+            reg = <0x000e4000 0x00008000>;
+        };
+
+        storage_partition: partition@ec000 {
+            label = "storage";
+            reg = <0x000ec000 0x00008000>;
+        };
+    };
+};
 ```
 
 ### 4. 配線 (Wiring)
@@ -97,7 +129,7 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 | **VCC (Red)** | **3.3V** | 電源 (3.3V 専用) |
 | **GND (Black)** | **GND** | グラウンド |
 | **TX (Yellow)** | **D7 (P1.12 / RX)** | データ送信 -> MCUのRXへ |
-| **RX (White)** | **D6 (P1.11 / TX)** | データ受信 <- MCUのTXへ |
+| **RX (Green)** | **D6 (P1.11 / TX)** | データ受信 <- MCUのTXへ |
 
 > [!CAUTION]
 > センサーの TX を MCU の TX に繋がないよう注意してください（クロス接続が必要です）。
@@ -120,4 +152,3 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 
 ## 設定ツール
 ビルドしたファームウェアを書き込んだ後、USB で PC に接続し、[config.html](./config.html) をブラウザで開くことで、指紋の登録やパスワードの設定が可能です。
-
