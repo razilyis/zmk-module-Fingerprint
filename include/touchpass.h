@@ -26,19 +26,20 @@
 #define CMD_TEMPLATENUM 0x1D
 #define CMD_READINDEXTABLE 0x1F
 #define CMD_AURALEDCONFIG 0x35
+#define CMD_CHECKSENSOR   0x36
 
-/* LED Styles */
-#define LED_OFF 0x00
-#define LED_ON 0x01
-#define LED_BREATHING 0x02
-#define LED_BLINKING 0x03
-#define LED_FLASHING 0x04
+/* LED Styles — R502-A AURA_LED_CONFIG CtrlCode values (must match datasheet) */
+#define LED_BREATHING 0x01
+#define LED_FLASHING  0x02
+#define LED_ON        0x03
+#define LED_OFF       0x04
 
 /* Colors */
-#define FP_LED_RED 0x01
-#define FP_LED_BLUE 0x02
+#define FP_LED_RED    0x01
+#define FP_LED_BLUE   0x02
 #define FP_LED_PURPLE 0x03
-#define FP_LED_GREEN 0x04
+#define FP_LED_GREEN  0x04
+#define FP_LED_CYAN   0x06
 
 /* Enrollment States */
 enum enroll_state {
