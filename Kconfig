@@ -27,6 +27,23 @@ config ZMK_TOUCHPASS_SERIAL_RPC
         Cannot be used simultaneously with ZMK_USB_LOGGING: both use the same
         CDC ACM UART. To debug with USB logging, set this option to n.
 
+config ZMK_TOUCHPASS_ENROLL_TIMEOUT_S
+    int "Enrollment timeout in seconds"
+    default 60
+    range 10 300
+    help
+        Maximum time (seconds) allowed for the full 6-step enrollment sequence.
+        Increase if you need more time to place your finger repeatedly.
+
+config ZMK_TOUCHPASS_POLL_INTERVAL_MS
+    int "Always-on polling interval in milliseconds"
+    default 80
+    range 50 500
+    depends on ZMK_TOUCHPASS_ALWAYS_ON
+    help
+        How often (milliseconds) the sensor is polled for a finger in always-on
+        mode. Lower values improve response time but increase battery drain.
+
 # Compatibility for ZMK v0.3 / Zephyr 3.5 settings mismatch
 config SETTINGS_FS_FILE
     string
