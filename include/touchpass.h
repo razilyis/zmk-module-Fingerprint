@@ -76,6 +76,7 @@ int touchpass_type_password(const finger_data_t *data);
 /* Sensor Status */
 int touchpass_check_sensor(void);
 bool touchpass_is_sensor_ready(void);
+uint16_t touchpass_get_last_score(void);
 int touchpass_get_template_count(uint16_t *count);
 int touchpass_get_library_size(uint16_t *size);
 int touchpass_read_index_table(uint8_t page, uint8_t *table);

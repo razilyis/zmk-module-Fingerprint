@@ -13,6 +13,7 @@ static const struct device *uart_dev;
 static uint8_t rx_buf[512];
 static uint16_t rx_idx = 0;
 static bool sensor_ready;
+static uint16_t last_match_score;
 
 /* Mutex protecting all sensor UART (uart0) access.
  * Required because sensor_init_thread, enroll_thread, and RPC thread
@@ -126,8 +127,10 @@ static int search_finger(uint16_t *match_id) {
     return -ETIMEDOUT;
   if (rx_buf[9] == 0x00) {
     *match_id = (rx_buf[10] << 8) | rx_buf[11];
+    last_match_score = (rx_buf[12] << 8) | rx_buf[13];
     return 0;
   }
+  last_match_score = 0;
   return rx_buf[9];
 }
 
@@ -151,6 +154,8 @@ static int store_template(uint8_t buf_id, uint16_t slot) {
 /* ===== Public Sensor API ===== */
 
 bool touchpass_is_sensor_ready(void) { return sensor_ready; }
+
+uint16_t touchpass_get_last_score(void) { return last_match_score; }
 
 int touchpass_get_template_count(uint16_t *count) {
   if (!uart_dev)
@@ -397,7 +402,8 @@ int touchpass_enroll_start(const char *name, const char *password,
   enroll_finger_id = finger_id;
   enroll_success = false;
   enroll_error = "";
-  enroll_timeout = k_uptime_get_32() + 60000;
+  enroll_timeout = k_uptime_get_32() +
+                   (CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S * 1000U);
 
   LOG_INF("Enrollment start requested: %s", enroll_name);
   enroll_state = ENROLL_START_REQUESTED;
@@ -666,7 +672,7 @@ static void polling_thread(void *p1, void *p2, void *p3) {
       }
     }
 
-    k_sleep(K_MSEC(80));
+    k_sleep(K_MSEC(CONFIG_ZMK_TOUCHPASS_POLL_INTERVAL_MS));
   }
 }
 
