@@ -41,6 +41,10 @@ static char rpc_frame_buf[RPC_TX_BUF_SIZE];
 
 static char last_status[64] = "Ready";
 
+/* Latch for cmd_get_detect: prevent re-authenticating while the same finger
+ * stays on the sensor across consecutive get_detect calls. Reset on no-finger. */
+static bool detect_latched;
+
 /* Cached sensor info (refreshed periodically, not on every call) */
 static uint16_t cached_count;
 static uint16_t cached_capacity = 200;
@@ -194,7 +198,7 @@ static void refresh_sensor_cache(void) {
 /* ===== Command Handlers ===== */
 
 static void cmd_ping(const char *params, int id) {
-  rpc_send_ok(id, "{\"ok\":true,\"pong\":true}");
+  rpc_send_ok(id, "{\"pong\":true}");
 }
 
 static void cmd_get_status(const char *params, int id) {
@@ -430,35 +434,49 @@ static void cmd_diagnostics(const char *params, int id) {
 static void cmd_get_detect(const char *params, int id) {
   int rc = touchpass_poll_detection();
   bool detected = false;
+  bool matched = false;
+  char finger_name[32] = "";
 
   if (rc == 0) {
     detected = true;
-    strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
-    last_status[sizeof(last_status) - 1] = '\0';
-  } else {
-    if (rc == -ENODATA) {
-      strncpy(last_status, "No Finger", sizeof(last_status) - 1);
-      last_status[sizeof(last_status) - 1] = '\0';
-    } else if (rc == -EBUSY) {
-      strncpy(last_status, "Sensor Busy", sizeof(last_status) - 1);
-      last_status[sizeof(last_status) - 1] = '\0';
-    } else if (rc == -ENODEV) {
-      strncpy(last_status, "Sensor Not Ready", sizeof(last_status) - 1);
-      last_status[sizeof(last_status) - 1] = '\0';
-    } else if (rc == -ETIMEDOUT) {
-      strncpy(last_status, "Sensor Timeout", sizeof(last_status) - 1);
-      last_status[sizeof(last_status) - 1] = '\0';
+    /* Authenticate on first detection; latch until finger is lifted to avoid
+     * repeated auth calls while the same finger stays on the sensor. */
+    if (!detect_latched) {
+      finger_data_t auth_data;
+      if (touchpass_authenticate(&auth_data) == 0) {
+        matched = true;
+        strncpy(finger_name, auth_data.name, sizeof(finger_name) - 1);
+        finger_name[sizeof(finger_name) - 1] = '\0';
+        snprintf(last_status, sizeof(last_status), "Matched: %s", auth_data.name);
+      } else {
+        snprintf(last_status, sizeof(last_status), "No Match");
+      }
+      detect_latched = true;
     } else {
-      strncpy(last_status, "Sensor Error", sizeof(last_status) - 1);
+      strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
       last_status[sizeof(last_status) - 1] = '\0';
     }
+  } else {
+    detect_latched = false;
+    if (rc == -ENODATA) {
+      strncpy(last_status, "No Finger", sizeof(last_status) - 1);
+    } else if (rc == -EBUSY) {
+      strncpy(last_status, "Sensor Busy", sizeof(last_status) - 1);
+    } else if (rc == -ENODEV) {
+      strncpy(last_status, "Sensor Not Ready", sizeof(last_status) - 1);
+    } else if (rc == -ETIMEDOUT) {
+      strncpy(last_status, "Sensor Timeout", sizeof(last_status) - 1);
+    } else {
+      strncpy(last_status, "Sensor Error", sizeof(last_status) - 1);
+    }
+    last_status[sizeof(last_status) - 1] = '\0';
   }
 
   snprintf(data_buf, sizeof(data_buf),
-           "{\"ok\":true,\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
-           "\"score\":%d,\"status\":\"%s\"}",
-           detected ? "true" : "false", detected ? "true" : "false", "", 0,
-           last_status);
+           "{\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
+           "\"status\":\"%s\"}",
+           detected ? "true" : "false", matched ? "true" : "false",
+           finger_name, last_status);
   rpc_send_ok(id, data_buf);
 }
 
@@ -471,7 +489,9 @@ static void cmd_reboot(const char *params, int id) {
 static void cmd_clear_bonds(const char *params, int id) {
   LOG_WRN("RPC: Clearing all BLE bonds...");
   zmk_ble_clear_all_bonds();
-  rpc_send_ok(id, "{\"ok\":true}");
+  rpc_send_ok(id, "{\"ok\":true,\"message\":\"Bonds cleared! Rebooting...\"}");
+  k_sleep(K_MSEC(500));
+  sys_reboot(SYS_REBOOT_COLD);
 }
 
 /* ===== Command Dispatch ===== */

@@ -72,6 +72,20 @@ static int receive_packet(uint32_t timeout_ms) {
   while (k_uptime_get_32() - start < timeout_ms) {
     uint8_t b;
     if (uart_poll_in(uart_dev, &b) == 0) {
+      /* Validate header: rx_buf[0]=0xEF, rx_buf[1]=0x01.
+       * Discard leading noise bytes, matching nrf52 reference firmware. */
+      if (rx_idx == 0) {
+        if (b != 0xEF)
+          continue;
+      } else if (rx_idx == 1) {
+        if (b != 0x01) {
+          /* Could be start of a new header */
+          rx_idx = (b == 0xEF) ? 1 : 0;
+          if (rx_idx == 1)
+            rx_buf[0] = b;
+          continue;
+        }
+      }
       rx_buf[rx_idx++] = b;
       if (rx_idx >= 9) {
         uint16_t len = (rx_buf[7] << 8) | rx_buf[8];
@@ -365,7 +379,10 @@ static bool enroll_capture_to_buffer(uint8_t buf_num) {
   return true;
 }
 
-static bool is_finger_lifted(void) { return capture_image() != 0x00; }
+/* Return true only when the sensor explicitly reports no finger (0x02).
+ * Using != 0x00 would treat transient errors (0x03 messy image, 0x04
+ * incomplete) as "lifted" and advance the enroll state machine prematurely. */
+static bool is_finger_lifted(void) { return capture_image() == 0x02; }
 
 int touchpass_enroll_start(const char *name, const char *password,
                            bool press_enter, int finger_id) {
@@ -405,13 +422,18 @@ int touchpass_enroll_step(void) {
     uint16_t lib_size = 200;
     touchpass_get_library_size(&lib_size);
 #ifdef CONFIG_NVS
-    for (uint16_t i = 0; i < lib_size; i++) {
-      finger_data_t existing;
-      if (touchpass_get_finger(i, &existing) == 0 &&
-          existing.finger_id == enroll_finger_id) {
-        touchpass_delete_template(i, 1);
-        touchpass_delete_finger(i);
-        break;
+    /* finger_id=-1 means "unspecified": skip the duplicate-removal scan.
+     * Without this guard every slot with finger_id==-1 would be deleted,
+     * matching the nrf52 reference (findSlotForFinger returns -1 for id<0). */
+    if (enroll_finger_id >= 0) {
+      for (uint16_t i = 0; i < lib_size; i++) {
+        finger_data_t existing;
+        if (touchpass_get_finger(i, &existing) == 0 &&
+            existing.finger_id == enroll_finger_id) {
+          touchpass_delete_template(i, 1);
+          touchpass_delete_finger(i);
+          break;
+        }
       }
     }
 #endif
@@ -658,9 +680,20 @@ int touchpass_check_sensor(void) {
   if (!uart_dev)
     return -ENODEV;
   k_mutex_lock(&sensor_mutex, K_FOREVER);
-  uint8_t cmd[] = {CMD_HANDSHAKE};
-  send_packet(FP_CMD_PACKET, cmd, 1);
+
+  /* Try CMD_HANDSHAKE first (standard) */
+  uint8_t cmd_hs[] = {CMD_HANDSHAKE};
+  send_packet(FP_CMD_PACKET, cmd_hs, 1);
   sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+
+  /* Fall back to CMD_CHECKSENSOR for R502-A firmware variants that do not
+   * respond to CMD_HANDSHAKE, matching nrf52 reference firmware behaviour. */
+  if (!sensor_ready) {
+    uint8_t cmd_cs[] = {CMD_CHECKSENSOR};
+    send_packet(FP_CMD_PACKET, cmd_cs, 1);
+    sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+  }
+
   k_mutex_unlock(&sensor_mutex);
   if (sensor_ready) {
     LOG_INF("R502-A sensor connected");
