@@ -67,6 +67,40 @@ static void rpc_println(const char *str) {
 
 /* ===== Minimal JSON Helpers ===== */
 
+/* Escape a string for safe JSON embedding.
+ * Handles: \ " \n \r \t and strips other control characters. */
+static void json_escape_string(const char *in, char *out, size_t out_size) {
+  size_t j = 0;
+  for (size_t i = 0; in[i] != '\0' && j < out_size - 1; i++) {
+    unsigned char c = (unsigned char)in[i];
+    if (c == '\\' || c == '"') {
+      if (j + 2 >= out_size)
+        break;
+      out[j++] = '\\';
+      out[j++] = c;
+    } else if (c == '\n') {
+      if (j + 2 >= out_size)
+        break;
+      out[j++] = '\\';
+      out[j++] = 'n';
+    } else if (c == '\r') {
+      if (j + 2 >= out_size)
+        break;
+      out[j++] = '\\';
+      out[j++] = 'r';
+    } else if (c == '\t') {
+      if (j + 2 >= out_size)
+        break;
+      out[j++] = '\\';
+      out[j++] = 't';
+    } else if (c >= 0x20) {
+      out[j++] = c;
+    }
+    /* Skip other control characters (< 0x20) */
+  }
+  out[j] = '\0';
+}
+
 static int json_find_string(const char *json, const char *key, char *out,
                             size_t out_size) {
   char search[48];
@@ -244,10 +278,12 @@ static void cmd_get_fingers(const char *params, int id) {
               if (!first)
                 data_buf[pos++] = ',';
               first = false;
+              char esc_name[40];
+              json_escape_string(data.name, esc_name, sizeof(esc_name));
               pos += snprintf(data_buf + pos, sizeof(data_buf) - pos,
                               "{\"id\":%d,\"name\":\"%s\",\"fingerId\":%d,"
                               "\"pressEnter\":%s}",
-                              slot, data.name, data.finger_id,
+                              slot, esc_name, data.finger_id,
                               data.press_enter ? "true" : "false");
             }
           }
@@ -375,11 +411,16 @@ static void cmd_enroll_status(const char *params, int id) {
     captured = true;
   }
 
+  char esc_msg[64];
+  char esc_name[40];
+  json_escape_string(msg, esc_msg, sizeof(esc_msg));
+  json_escape_string(name, esc_name, sizeof(esc_name));
+
   snprintf(data_buf, sizeof(data_buf),
            "{\"step\":%d,\"message\":\"%s\",\"done\":%s,\"captured\":%s,"
            "\"ok\":%s,\"name\":\"%s\",\"status\":\"%s\"}",
-           step, msg, done ? "true" : "false", captured ? "true" : "false",
-           ok ? "true" : "false", name, msg);
+           step, esc_msg, done ? "true" : "false", captured ? "true" : "false",
+           ok ? "true" : "false", esc_name, esc_msg);
   rpc_send_ok(id, data_buf);
 }
 
@@ -435,6 +476,7 @@ static void cmd_get_detect(const char *params, int id) {
   int rc = touchpass_poll_detection();
   bool detected = false;
   bool matched = false;
+  uint16_t score = 0;
   char finger_name[32] = "";
 
   if (rc == 0) {
@@ -445,6 +487,7 @@ static void cmd_get_detect(const char *params, int id) {
       finger_data_t auth_data;
       if (touchpass_authenticate(&auth_data) == 0) {
         matched = true;
+        score = touchpass_get_last_score();
         strncpy(finger_name, auth_data.name, sizeof(finger_name) - 1);
         finger_name[sizeof(finger_name) - 1] = '\0';
         snprintf(last_status, sizeof(last_status), "Matched: %s", auth_data.name);
@@ -472,11 +515,14 @@ static void cmd_get_detect(const char *params, int id) {
     last_status[sizeof(last_status) - 1] = '\0';
   }
 
+  char esc_finger[40];
+  json_escape_string(finger_name, esc_finger, sizeof(esc_finger));
+
   snprintf(data_buf, sizeof(data_buf),
            "{\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
-           "\"status\":\"%s\"}",
+           "\"score\":%d,\"status\":\"%s\"}",
            detected ? "true" : "false", matched ? "true" : "false",
-           finger_name, last_status);
+           esc_finger, score, last_status);
   rpc_send_ok(id, data_buf);
 }
 
