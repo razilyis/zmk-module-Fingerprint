@@ -34,7 +34,7 @@ behavior_tp_keymap_binding_released(struct zmk_behavior_binding *binding,
 }
 
 static const struct behavior_driver_api behavior_tp_driver_api = {
-    .locality = BEHAVIOR_LOCALITY_CENTRAL,
+    .locality = BEHAVIOR_LOCALITY_GLOBAL,
     .binding_pressed = behavior_tp_keymap_binding_pressed,
     .binding_released = behavior_tp_keymap_binding_released,
 };
