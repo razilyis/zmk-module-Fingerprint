@@ -26,19 +26,20 @@
 #define CMD_TEMPLATENUM 0x1D
 #define CMD_READINDEXTABLE 0x1F
 #define CMD_AURALEDCONFIG 0x35
+#define CMD_CHECKSENSOR 0x36
 
-/* LED Styles */
-#define LED_OFF 0x00
-#define LED_ON 0x01
-#define LED_BREATHING 0x02
-#define LED_BLINKING 0x03
-#define LED_FLASHING 0x04
+/* LED Styles — R502-A AURA_LED_CONFIG CtrlCode values (must match datasheet) */
+#define LED_BREATHING 0x01
+#define LED_FLASHING 0x02
+#define LED_ON 0x03
+#define LED_OFF 0x04
 
 /* Colors */
 #define FP_LED_RED 0x01
 #define FP_LED_BLUE 0x02
 #define FP_LED_PURPLE 0x03
 #define FP_LED_GREEN 0x04
+#define FP_LED_CYAN 0x06
 
 /* Enrollment States */
 enum enroll_state {
@@ -69,17 +70,19 @@ typedef struct {
 
 /* Driver Init & Authentication */
 int touchpass_init(void);
-int touchpass_authenticate(finger_data_t *data);
+int touchpass_authenticate(finger_data_t *data, uint16_t *score);
 int touchpass_type_password(const finger_data_t *data);
 
 /* Sensor Status */
 int touchpass_check_sensor(void);
 bool touchpass_is_sensor_ready(void);
+uint16_t touchpass_get_last_score(void);
 int touchpass_get_template_count(uint16_t *count);
 int touchpass_get_library_size(uint16_t *size);
 int touchpass_read_index_table(uint8_t page, uint8_t *table);
 int touchpass_delete_template(uint16_t id, uint16_t count);
-int touchpass_set_led(uint8_t ctrl, uint8_t speed, uint8_t color, uint8_t times);
+int touchpass_set_led(uint8_t ctrl, uint8_t speed, uint8_t color,
+                      uint8_t times);
 
 /* Enrollment API */
 int touchpass_enroll_start(const char *name, const char *password,
@@ -101,9 +104,6 @@ int touchpass_storage_init(void);
 int touchpass_get_finger(uint16_t id, finger_data_t *data);
 int touchpass_save_finger(uint16_t id, const finger_data_t *data);
 int touchpass_delete_finger(uint16_t id);
-int touchpass_list_fingers(void (*cb)(uint16_t id, const finger_data_t *data,
-                                     void *user_data),
-                           void *user_data);
 
 /* HID helper (US keyboard layout): convert ASCII -> usage + shift flag */
 static inline bool ascii_to_hid_key(char c, uint8_t *usage, bool *shift) {

@@ -13,6 +13,7 @@ static const struct device *uart_dev;
 static uint8_t rx_buf[512];
 static uint16_t rx_idx = 0;
 static bool sensor_ready;
+static uint16_t last_match_score;
 
 /* Mutex protecting all sensor UART (uart0) access.
  * Required because sensor_init_thread, enroll_thread, and RPC thread
@@ -72,6 +73,20 @@ static int receive_packet(uint32_t timeout_ms) {
   while (k_uptime_get_32() - start < timeout_ms) {
     uint8_t b;
     if (uart_poll_in(uart_dev, &b) == 0) {
+      /* Validate header: rx_buf[0]=0xEF, rx_buf[1]=0x01.
+       * Discard leading noise bytes, matching nrf52 reference firmware. */
+      if (rx_idx == 0) {
+        if (b != 0xEF)
+          continue;
+      } else if (rx_idx == 1) {
+        if (b != 0x01) {
+          /* Could be start of a new header */
+          rx_idx = (b == 0xEF) ? 1 : 0;
+          if (rx_idx == 1)
+            rx_buf[0] = b;
+          continue;
+        }
+      }
       rx_buf[rx_idx++] = b;
       if (rx_idx >= 9) {
         uint16_t len = (rx_buf[7] << 8) | rx_buf[8];
@@ -81,8 +96,15 @@ static int receive_packet(uint32_t timeout_ms) {
       if (rx_idx >= sizeof(rx_buf))
         break;
     } else {
-      k_sleep(K_MSEC(1));
+      /* At 57600 baud, bytes arrive every ~174us. k_sleep(1ms) would
+       * yield the thread, causing the 1-byte DMA to miss subsequent
+       * bytes in a multi-byte response before STARTRX is re-triggered.
+       * Use busy-wait to poll fast enough to restart DMA between bytes. */
+      k_busy_wait(200);
     }
+  }
+  if (rx_idx > 0) {
+    LOG_WRN("receive_packet timeout: got %d partial bytes", rx_idx);
   }
   return -ETIMEDOUT;
 }
@@ -105,15 +127,20 @@ static int generate_char(uint8_t slot) {
   return rx_buf[9];
 }
 
-static int search_finger(uint16_t *match_id) {
+static int search_finger(uint16_t *match_id, uint16_t *score) {
   uint8_t cmd[] = {CMD_SEARCH, 0x01, 0x00, 0x00, 0x00, 0xC8};
   send_packet(FP_CMD_PACKET, cmd, 6);
   if (receive_packet(2000) < 0)
     return -ETIMEDOUT;
   if (rx_buf[9] == 0x00) {
     *match_id = (rx_buf[10] << 8) | rx_buf[11];
+    last_match_score = (rx_buf[12] << 8) | rx_buf[13];
+    if (score) {
+      *score = last_match_score;
+    }
     return 0;
   }
+  last_match_score = 0;
   return rx_buf[9];
 }
 
@@ -137,6 +164,8 @@ static int store_template(uint8_t buf_id, uint16_t slot) {
 /* ===== Public Sensor API ===== */
 
 bool touchpass_is_sensor_ready(void) { return sensor_ready; }
+
+uint16_t touchpass_get_last_score(void) { return last_match_score; }
 
 int touchpass_get_template_count(uint16_t *count) {
   if (!uart_dev)
@@ -256,7 +285,7 @@ static int find_empty_slot(uint16_t lib_size) {
 
 /* ===== Authentication ===== */
 
-int touchpass_authenticate(finger_data_t *data) {
+int touchpass_authenticate(finger_data_t *data, uint16_t *score) {
   k_mutex_lock(&sensor_mutex, K_FOREVER);
   if (capture_image() != 0x00) {
     k_mutex_unlock(&sensor_mutex);
@@ -269,7 +298,7 @@ int touchpass_authenticate(finger_data_t *data) {
   }
 
   uint16_t match_id;
-  int rc = search_finger(&match_id);
+  int rc = search_finger(&match_id, score);
   k_mutex_unlock(&sensor_mutex);
 
   if (rc == 0) {
@@ -365,7 +394,10 @@ static bool enroll_capture_to_buffer(uint8_t buf_num) {
   return true;
 }
 
-static bool is_finger_lifted(void) { return capture_image() != 0x00; }
+/* Return true only when the sensor explicitly reports no finger (0x02).
+ * Using != 0x00 would treat transient errors (0x03 messy image, 0x04
+ * incomplete) as "lifted" and advance the enroll state machine prematurely. */
+static bool is_finger_lifted(void) { return capture_image() == 0x02; }
 
 int touchpass_enroll_start(const char *name, const char *password,
                            bool press_enter, int finger_id) {
@@ -380,7 +412,8 @@ int touchpass_enroll_start(const char *name, const char *password,
   enroll_finger_id = finger_id;
   enroll_success = false;
   enroll_error = "";
-  enroll_timeout = k_uptime_get_32() + 60000;
+  enroll_timeout =
+      k_uptime_get_32() + (CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S * 1000U);
 
   LOG_INF("Enrollment start requested: %s", enroll_name);
   enroll_state = ENROLL_START_REQUESTED;
@@ -405,13 +438,18 @@ int touchpass_enroll_step(void) {
     uint16_t lib_size = 200;
     touchpass_get_library_size(&lib_size);
 #ifdef CONFIG_NVS
-    for (uint16_t i = 0; i < lib_size; i++) {
-      finger_data_t existing;
-      if (touchpass_get_finger(i, &existing) == 0 &&
-          existing.finger_id == enroll_finger_id) {
-        touchpass_delete_template(i, 1);
-        touchpass_delete_finger(i);
-        break;
+    /* finger_id=-1 means "unspecified": skip the duplicate-removal scan.
+     * Without this guard every slot with finger_id==-1 would be deleted,
+     * matching the nrf52 reference (findSlotForFinger returns -1 for id<0). */
+    if (enroll_finger_id >= 0) {
+      for (uint16_t i = 0; i < lib_size; i++) {
+        finger_data_t existing;
+        if (touchpass_get_finger(i, &existing) == 0 &&
+            existing.finger_id == enroll_finger_id) {
+          touchpass_delete_template(i, 1);
+          touchpass_delete_finger(i);
+          break;
+        }
       }
     }
 #endif
@@ -624,7 +662,8 @@ static void polling_thread(void *p1, void *p2, void *p3) {
       no_finger_streak = 0;
       if (!finger_latched) {
         finger_data_t data;
-        if (touchpass_authenticate(&data) == 0) {
+        uint16_t dummy_score;
+        if (touchpass_authenticate(&data, &dummy_score) == 0) {
           LOG_INF("Polling: Detected %s", data.name);
           touchpass_type_password(&data);
         }
@@ -644,7 +683,7 @@ static void polling_thread(void *p1, void *p2, void *p3) {
       }
     }
 
-    k_sleep(K_MSEC(80));
+    k_sleep(K_MSEC(CONFIG_ZMK_TOUCHPASS_POLL_INTERVAL_MS));
   }
 }
 
@@ -658,9 +697,20 @@ int touchpass_check_sensor(void) {
   if (!uart_dev)
     return -ENODEV;
   k_mutex_lock(&sensor_mutex, K_FOREVER);
-  uint8_t cmd[] = {CMD_HANDSHAKE};
-  send_packet(FP_CMD_PACKET, cmd, 1);
+
+  /* Try CMD_HANDSHAKE first (standard) */
+  uint8_t cmd_hs[] = {CMD_HANDSHAKE};
+  send_packet(FP_CMD_PACKET, cmd_hs, 1);
   sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+
+  /* Fall back to CMD_CHECKSENSOR for R502-A firmware variants that do not
+   * respond to CMD_HANDSHAKE, matching nrf52 reference firmware behaviour. */
+  if (!sensor_ready) {
+    uint8_t cmd_cs[] = {CMD_CHECKSENSOR};
+    send_packet(FP_CMD_PACKET, cmd_cs, 1);
+    sensor_ready = (receive_packet(1000) >= 0 && rx_buf[9] == 0x00);
+  }
+
   k_mutex_unlock(&sensor_mutex);
   if (sensor_ready) {
     LOG_INF("R502-A sensor connected");
@@ -693,13 +743,14 @@ static void sensor_init_thread(void *p1, void *p2, void *p3) {
   /* R502-A needs ~1.5s to boot after power-on */
   k_sleep(K_MSEC(2000));
 
-  for (int attempt = 0; attempt < 12; attempt++) {
-    if (touchpass_check_sensor() == 0) {
-      return;
+  while (1) {
+    if (!sensor_ready) {
+      if (touchpass_check_sensor() == 0) {
+        /* Successfully initialized */
+      }
     }
     k_sleep(K_MSEC(5000));
   }
-  LOG_WRN("Sensor init thread: gave up after 60s");
 }
 
 K_THREAD_DEFINE(tp_sensor_init_tid, 1024, sensor_init_thread, NULL, NULL, NULL,

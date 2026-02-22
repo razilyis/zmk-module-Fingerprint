@@ -8,23 +8,8 @@ menuconfig ZMK_TOUCHPASS
 
 if ZMK_TOUCHPASS
 
-config ZMK_TOUCHPASS_UART_NAME
-	string "UART Device Name"
-	default "uart0"
-	help
-	  The name of the UART device connected to the fingerprint sensor.
-
-config ZMK_TOUCHPASS_UART_TX_PIN
-    int "UART TX Pin"
-    default 6
-    help
-        XIAO nRF52840 default TX pin for Serial1 is D6 (P1.11).
-
-config ZMK_TOUCHPASS_UART_RX_PIN
-    int "UART RX Pin"
-    default 7
-    help
-        XIAO nRF52840 default RX pin for Serial1 is D7 (P1.12).
+# Note: UART device and pin assignments are configured via DeviceTree (pinctrl)
+# in the shield overlay, not via Kconfig. The uart0 node is used directly.
 
 config ZMK_TOUCHPASS_ALWAYS_ON
     bool "Always-on (Polling) Mode"
@@ -36,10 +21,28 @@ config ZMK_TOUCHPASS_ALWAYS_ON
 config ZMK_TOUCHPASS_SERIAL_RPC
     bool "Enable Serial RPC (for config.html)"
     default n
-    depends on USB_CDC_ACM
+    depends on USB_CDC_ACM && !ZMK_USB_LOGGING
     help
         Enable JSON-RPC communication over USB Serial for the web configuration tool.
-        Note: Cannot be used simultaneously with ZMK_USB_LOGGING (both use the same CDC ACM UART).
+        Cannot be used simultaneously with ZMK_USB_LOGGING: both use the same
+        CDC ACM UART. To debug with USB logging, set this option to n.
+
+config ZMK_TOUCHPASS_ENROLL_TIMEOUT_S
+    int "Enrollment timeout in seconds"
+    default 60
+    range 10 300
+    help
+        Maximum time (seconds) allowed for the full 6-step enrollment sequence.
+        Increase if you need more time to place your finger repeatedly.
+
+config ZMK_TOUCHPASS_POLL_INTERVAL_MS
+    int "Always-on polling interval in milliseconds"
+    default 80
+    range 50 500
+    depends on ZMK_TOUCHPASS_ALWAYS_ON
+    help
+        How often (milliseconds) the sensor is polled for a finger in always-on
+        mode. Lower values improve response time but increase battery drain.
 
 # Compatibility for ZMK v0.3 / Zephyr 3.5 settings mismatch
 config SETTINGS_FS_FILE
