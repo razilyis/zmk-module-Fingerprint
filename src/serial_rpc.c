@@ -26,8 +26,8 @@ LOG_MODULE_REGISTER(touchpass_rpc, CONFIG_ZMK_LOG_LEVEL);
 
 /* ===== Configuration ===== */
 
-#define RPC_BUF_SIZE 512
-#define RPC_TX_BUF_SIZE 1024
+#define RPC_BUF_SIZE 2048
+#define RPC_TX_BUF_SIZE 2048
 #define FIRMWARE_VERSION "2.0.0-zmk"
 #define PLATFORM_NAME "nRF52840 (ZMK)"
 
@@ -42,8 +42,12 @@ static char rpc_frame_buf[RPC_TX_BUF_SIZE];
 static char last_status[64] = "Ready";
 
 /* Latch for cmd_get_detect: prevent re-authenticating while the same finger
- * stays on the sensor across consecutive get_detect calls. Reset on no-finger. */
+ * stays on the sensor across consecutive get_detect calls. Reset on no-finger.
+ */
 static bool detect_latched;
+static bool last_matched;
+static char last_finger_name[32];
+static uint16_t last_match_score;
 
 /* Cached sensor info (refreshed periodically, not on every call) */
 static uint16_t cached_count;
@@ -464,7 +468,7 @@ static void cmd_get_system_info(const char *params, int id) {
 static void cmd_diagnostics(const char *params, int id) {
   snprintf(data_buf, sizeof(data_buf),
            "{\"platform\":\"%s\",\"firmware\":\"%s\","
-           "\"uart1\":{\"rxPin\":7,\"txPin\":6,\"baud\":57600},"
+           "\"uart0\":{\"rxPin\":7,\"txPin\":6,\"baud\":57600},"
            "\"usb\":{\"hid\":true,\"serial\":true,\"mode\":\"ble\"},"
            "\"sensor\":{\"connected\":%s}}",
            PLATFORM_NAME, FIRMWARE_VERSION,
@@ -478,6 +482,7 @@ static void cmd_get_detect(const char *params, int id) {
   bool matched = false;
   uint16_t score = 0;
   char finger_name[32] = "";
+  uint16_t score = 0;
 
   if (rc == 0) {
     detected = true;
@@ -485,22 +490,33 @@ static void cmd_get_detect(const char *params, int id) {
      * repeated auth calls while the same finger stays on the sensor. */
     if (!detect_latched) {
       finger_data_t auth_data;
-      if (touchpass_authenticate(&auth_data) == 0) {
+      if (touchpass_authenticate(&auth_data, &score) == 0) {
         matched = true;
         score = touchpass_get_last_score();
         strncpy(finger_name, auth_data.name, sizeof(finger_name) - 1);
         finger_name[sizeof(finger_name) - 1] = '\0';
-        snprintf(last_status, sizeof(last_status), "Matched: %s", auth_data.name);
+        snprintf(last_status, sizeof(last_status), "Matched: %s",
+                 auth_data.name);
       } else {
         snprintf(last_status, sizeof(last_status), "No Match");
       }
       detect_latched = true;
+      last_matched = matched;
+      strncpy(last_finger_name, finger_name, sizeof(last_finger_name));
+      last_match_score = score;
     } else {
+      matched = last_matched;
+      strncpy(finger_name, last_finger_name, sizeof(finger_name) - 1);
+      finger_name[sizeof(finger_name) - 1] = '\0';
+      score = last_match_score;
       strncpy(last_status, "Finger Detected", sizeof(last_status) - 1);
       last_status[sizeof(last_status) - 1] = '\0';
     }
   } else {
     detect_latched = false;
+    last_matched = false;
+    last_finger_name[0] = '\0';
+    last_match_score = 0;
     if (rc == -ENODATA) {
       strncpy(last_status, "No Finger", sizeof(last_status) - 1);
     } else if (rc == -EBUSY) {
@@ -520,9 +536,9 @@ static void cmd_get_detect(const char *params, int id) {
 
   snprintf(data_buf, sizeof(data_buf),
            "{\"detected\":%s,\"matched\":%s,\"finger\":\"%s\","
-           "\"score\":%d,\"status\":\"%s\"}",
-           detected ? "true" : "false", matched ? "true" : "false",
-           esc_finger, score, last_status);
+           "\"score\":%u,\"status\":\"%s\"}",
+           detected ? "true" : "false", matched ? "true" : "false", esc_finger,
+           score, last_status);
   rpc_send_ok(id, data_buf);
 }
 
@@ -658,7 +674,8 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
     }
 
     uint32_t now = k_uptime_get_32();
-    if (had_command && sensor_cache_warmup_pending && sensor_cache_warmup_at == 0) {
+    if (had_command && sensor_cache_warmup_pending &&
+        sensor_cache_warmup_at == 0) {
       /* Delay initial cache warmup until after first valid command response.
        * This prevents startup blocking from starving early RPC commands. */
       sensor_cache_warmup_at = now + 200;
@@ -677,7 +694,8 @@ static void rpc_thread(void *p1, void *p2, void *p3) {
     }
 
     /* Warm up sensor cache only after first command has been handled. */
-    if (!enrolling && sensor_cache_warmup_pending && sensor_cache_warmup_at != 0 &&
+    if (!enrolling && sensor_cache_warmup_pending &&
+        sensor_cache_warmup_at != 0 &&
         ((int32_t)(now - sensor_cache_warmup_at) >= 0)) {
       refresh_sensor_cache();
       sensor_cache_warmup_pending = false;
