@@ -482,7 +482,6 @@ static void cmd_get_detect(const char *params, int id) {
   bool matched = false;
   uint16_t score = 0;
   char finger_name[32] = "";
-  uint16_t score = 0;
 
   if (rc == 0) {
     detected = true;
