@@ -11,6 +11,11 @@ TouchPass は、指紋センサー（R502-A 等）を使用してパスワード
 本モジュールは **ZMK v0.3 (Zephyr 3.5)** をベースに構築・検証されています。
 指紋認証に成功すると、事前に登録されたパスワードをキーストロークとして自動送信します。
 
+### 主な特徴
+- **非同期・ノンブロッキング動作**: センサーの初期化や指紋認証処理は専用の独立したスレッドで行われます。そのため、認証待ち中や長いパスワードを送信している最中でも、通常のタイピング（他のキー入力）やレイヤー切り替えが阻害されることはありません。
+- **自動リカバリ (起動待機)**: キーボード起動直後に指紋センサーの応答がない場合でも諦めず、バックグラウンド接続のリトライを維持します。後から線が繋がった場合でも、自動的に復帰して利用可能になります。
+- **Web対応設定ツール**: Web Serial API対応ブラウザ（Chrome/Edge等）から [config.html](./config.html) を開き、パスワードや指紋の管理が可能です。（登録名は最大31文字、パスワードは最大63文字まで対応）
+
 ## 他のキーボードへの導入方法
 
 既存の ZMK 構成（zmk-config）に TouchPass を追加するには、以下の手順に従ってください。
@@ -39,14 +44,17 @@ manifest:
 `config/board.conf`（または `shield.conf`）に以下の設定を追加します。
 
 ```kconfig
-# TouchPass を有効化
+# TouchPass を有効化（SERIAL サブシステムが必要）
 CONFIG_ZMK_TOUCHPASS=y
+CONFIG_SERIAL=y
+
 # 設定ツール (config.html) 用のシリアル通信を有効化
 CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y
+
 # 常時待機モード（指を置くだけで入力）を有効化する場合（デフォルト: n）
 # CONFIG_ZMK_TOUCHPASS_ALWAYS_ON=y
 
-# 必要なサブシステムの有効化（NVS）
+# 必要なサブシステムの有効化
 CONFIG_USB_DEVICE_STACK=y
 CONFIG_UART_LINE_CTRL=y
 CONFIG_USB_CDC_ACM=y
@@ -57,6 +65,7 @@ CONFIG_FLASH_PAGE_LAYOUT=y
 CONFIG_SETTINGS=y
 CONFIG_NVS=y
 CONFIG_SETTINGS_NVS=y
+CONFIG_REBOOT=y
 
 # Serial RPC を使う場合の競合回避（JSON破損防止）
 CONFIG_ZMK_USB_LOGGING=n
@@ -64,13 +73,20 @@ CONFIG_LOG_BACKEND_UART=n
 CONFIG_UART_CONSOLE=n
 ```
 
+#### オプション設定
+
+| Kconfig | デフォルト | 説明 |
+|---|---|---|
+| `CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S` | `60` | 登録タイムアウト（秒）。範囲: 10〜300 |
+| `CONFIG_ZMK_TOUCHPASS_POLL_INTERVAL_MS` | `80` | 常時待機モードのポーリング間隔（ms）。範囲: 50〜500。`ALWAYS_ON` 有効時のみ有効 |
+
 ### 3. デバイスツリー (.overlay) の設定
 
 指紋センサーを接続する UART ピンを定義し、Behavior をインスタンス化します。
 以下は XIAO nRF52840 (D6/TX, D7/RX) の例です。
 
 ```dts
-// 共通定義の読み込み
+// Behavior 定義
 / {
     behaviors {
         tp: tp {
@@ -84,8 +100,15 @@ CONFIG_UART_CONSOLE=n
 &pinctrl {
     uart0_default: uart0_default {
         group1 {
-            psels = <NRF_PSEL(UART_TX, 1, 11)>, // TX Pin
-                    <NRF_PSEL(UART_RX, 1, 12)>; // RX Pin
+            psels = <NRF_PSEL(UART_TX, 1, 11)>, // TX Pin (D6)
+                    <NRF_PSEL(UART_RX, 1, 12)>; // RX Pin (D7)
+        };
+    };
+    uart0_sleep: uart0_sleep {
+        group1 {
+            psels = <NRF_PSEL(UART_TX, 1, 11)>,
+                    <NRF_PSEL(UART_RX, 1, 12)>;
+            low-power-enable;
         };
     };
 };
@@ -94,7 +117,25 @@ CONFIG_UART_CONSOLE=n
     status = "okay";
     current-speed = <57600>;
     pinctrl-0 = <&uart0_default>;
-    pinctrl-names = "default";
+    pinctrl-1 = <&uart0_sleep>;
+    pinctrl-names = "default", "sleep";
+};
+
+// Serial RPC (config.html) を使用する場合は以下も追加
+&zephyr_udc0 {
+    status = "okay";
+    usb_cdc_acm_uart: cdc-acm-uart {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};
+
+/ {
+    chosen {
+        /delete-property/ zephyr,console;
+        /delete-property/ zephyr,shell-uart;
+        zephyr,console = &usb_cdc_acm_uart;
+        zephyr,shell-uart = &usb_cdc_acm_uart;
+    };
 };
 
 /* NVS partitions
@@ -128,8 +169,8 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 | :--- | :--- | :--- |
 | **VCC (Red)** | **3.3V** | 電源 (3.3V 専用) |
 | **GND (Black)** | **GND** | グラウンド |
-| **TX (Yellow)** | **D7 (P1.12 / RX)** | データ送信 -> MCUのRXへ |
-| **RX (Green)** | **D6 (P1.11 / TX)** | データ受信 <- MCUのTXへ |
+| **TX (Yellow)** | **D7 (P1.12 / RX)** | データ送信 → MCU の RX へ |
+| **RX (White)** | **D6 (P1.11 / TX)** | データ受信 ← MCU の TX へ |
 
 > [!CAUTION]
 > センサーの TX を MCU の TX に繋がないよう注意してください（クロス接続が必要です）。
@@ -150,5 +191,27 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 };
 ```
 
-## 設定ツール
-ビルドしたファームウェアを書き込んだ後、USB で PC に接続し、[config.html](./config.html) をブラウザで開くことで、指紋の登録やパスワードの設定が可能です。
+## 設定ツール (config.html)
+
+ビルドしたファームウェアを書き込んだ後、USB で PC に接続し、[config.html](./config.html) をブラウザで開くことで、以下の操作が可能です。
+
+- 指紋の登録（6ステップキャプチャ）
+- 登録済み指紋へのパスワード設定・変更・削除
+- BLE ボンド削除・再起動
+- センサー・接続状態の確認
+
+> [!IMPORTANT]
+> **ブラウザ要件**: Web Serial API を使用するため、**Google Chrome または Microsoft Edge 89 以降**が必要です。Firefox・Safari では動作しません。
+> ページを開いた後、「Connect」ボタンをクリックしてキーボードのシリアルポートを選択してください。
+
+## トラブルシューティング
+
+| 症状 | 原因候補 | 対処 |
+|---|---|---|
+| `config.html` が接続できない | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=n` | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y` を設定してリビルド |
+| `config.html` が接続できない | `CONFIG_ZMK_USB_LOGGING=y` と競合 | `CONFIG_ZMK_USB_LOGGING=n` に設定 |
+| センサーが認識されない | UART ピン設定ミス | `.overlay` のピン番号と実際の配線を確認 |
+| センサーが認識されない | 電源電圧 | R502-A は **3.3V 専用**。5V 接続は破損の原因 |
+| 登録がタイムアウトする | デフォルトの60秒では短い | `CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S=120` 等に延長 |
+| BLE 接続が不安定 | BLE bonding 情報の不整合 | `settings_reset` ファームウェアで Flash 初期化後、再ペアリング |
+| パスワードが正しく入力されない | パスワードに未対応の記号が含まれる | 現在 US キーボードレイアウトのみ対応。日本語IME 入力は不可 |
