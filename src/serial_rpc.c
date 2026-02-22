@@ -315,10 +315,13 @@ static void cmd_get_finger(const char *params, int id) {
     return;
   }
 
+  char esc_name[40];
+  json_escape_string(data.name, esc_name, sizeof(esc_name));
+
   snprintf(data_buf, sizeof(data_buf),
            "{\"ok\":true,\"id\":%d,\"name\":\"%s\",\"hasPassword\":%s,"
            "\"pressEnter\":%s,\"fingerId\":%d}",
-           slot, data.name, (data.password[0] != '\0') ? "true" : "false",
+           slot, esc_name, (data.password[0] != '\0') ? "true" : "false",
            data.press_enter ? "true" : "false", data.finger_id);
   rpc_send_ok(id, data_buf);
 #else
@@ -491,7 +494,6 @@ static void cmd_get_detect(const char *params, int id) {
       finger_data_t auth_data;
       if (touchpass_authenticate(&auth_data, &score) == 0) {
         matched = true;
-        score = touchpass_get_last_score();
         strncpy(finger_name, auth_data.name, sizeof(finger_name) - 1);
         finger_name[sizeof(finger_name) - 1] = '\0';
         snprintf(last_status, sizeof(last_status), "Matched: %s",
