@@ -936,7 +936,8 @@
         <button onclick="runDiagnostics()" class="btn btn-secondary" style="flex:1">
           Diagnostics
         </button>
-        <button onclick="resetBluetooth()" class="btn btn-danger" style="flex:1; background:rgba(255, 71, 87, 0.2); color:var(--err); font-weight:bold">
+        <button onclick="resetBluetooth()" class="btn btn-danger"
+          style="flex:1; background:rgba(255, 71, 87, 0.2); color:var(--err); font-weight:bold">
           Reset Bluetooth
         </button>
       </div>
@@ -946,7 +947,8 @@
       <div class="card-header"><span class="card-title">Debug Log & Terminal</span></div>
       <div class="debug-log-container" id="debugLogContainer"></div>
       <div style="display:flex; gap:8px; margin-top:12px">
-        <input type="text" id="rawCommandInput" class="form-input" style="flex:1; padding:8px 12px; font-size:12px; font-family:monospace" placeholder='{"cmd":"ping"}'>
+        <input type="text" id="rawCommandInput" class="form-input"
+          style="flex:1; padding:8px 12px; font-size:12px; font-family:monospace" placeholder='{"cmd":"ping"}'>
         <button onclick="sendRawCommand()" class="btn btn-primary btn-sm">Send</button>
       </div>
     </div>
@@ -962,7 +964,7 @@
       <div class="modal-body" id="enrollStep1">
         <div class="form-group">
           <label class="form-label">Name</label>
-          <input type="text" class="form-input" id="enrollName" placeholder="e.g. GitHub" maxlength="20">
+          <input type="text" class="form-input" id="enrollName" placeholder="e.g. GitHub" maxlength="31">
         </div>
         <div class="form-group">
           <label class="form-label">Password</label>
@@ -1028,7 +1030,7 @@
         <input type="hidden" id="editId">
         <div class="form-group">
           <label class="form-label">Name</label>
-          <input type="text" class="form-input" id="editName" placeholder="Name" maxlength="20">
+          <input type="text" class="form-input" id="editName" placeholder="Name" maxlength="31">
         </div>
         <div class="form-group">
           <label class="form-label">New Password</label>
@@ -1725,7 +1727,7 @@
         console.log('Diagnostics:', result);
 
         // Display in activity log
-        log(`UART1: RX=GPIO${result.uart1.rxPin}, TX=GPIO${result.uart1.txPin}, Baud=${result.uart1.baud}`);
+        log(`UART0: RX=GPIO${result.uart0.rxPin}, TX=GPIO${result.uart0.txPin}, Baud=${result.uart0.baud}`);
         log(`USB: HID=${result.usb.hid}, Serial=${result.usb.serial}, Mode=${result.usb.mode}`);
         log(`Sensor: Connected=${result.sensor.connected}`);
 
