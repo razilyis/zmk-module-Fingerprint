@@ -188,18 +188,17 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 
 ### 5. キーマップでの使用
 
-`config/your_keyboard.keymap` (の先頭に `#include <behaviors/touchpass.dtsi>` を追記した状態) で、定義された `&touchpass` を任意のキーに割り当てます。
+ご自身の `config/your_keyboard.keymap` の任意のキー位置に `&touchpass` を割り当ててください。
 
+**設定例：**
 ```dts
-/ {
-    keymap {
-        default_layer {
+// ... 他の設定 ...
+
             bindings = <
-                &kp A &kp B &touchpass  // 指紋認証ボタン
+                // ... 他のキー群 ...
+                &kp A  &kp B  &touchpass  // 指紋認証センサーを配置したい位置に &touchpass を記述
+                // ... 他のキー群 ...
             >;
-        };
-    };
-};
 ```
 
 ## 設定ツール (config.html)
