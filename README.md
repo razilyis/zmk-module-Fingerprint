@@ -220,3 +220,12 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 | 登録がタイムアウトする | デフォルトの60秒では短い | `CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S=120` 等に延長 |
 | BLE 接続が不安定 | BLE bonding 情報の不整合 | `settings_reset` ファームウェアで Flash 初期化後、再ペアリング |
 | パスワードが正しく入力されない | パスワードに未対応の記号が含まれる | 現在 US キーボードレイアウトのみ対応。日本語IME 入力は不可 |
+
+## ライセンス (License)
+
+本プロジェクトは **MIT License** の下で公開されています。
+
+- 原作者: [Tobias Weissert](https://github.com/tobiasweissert)
+- 改変・ZMKモジュール化: [RaZiLy](https://github.com/razilyis)
+
+詳細は [LICENSE](./LICENSE) ファイルを参照してください。
