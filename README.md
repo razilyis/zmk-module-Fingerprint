@@ -17,7 +17,7 @@ TouchPass は、指紋センサー（R502-A 等）を使用してパスワード
 指紋認証に成功すると、事前に登録されたパスワードをキーストロークとして自動送信します。
 
 ### 主な特徴
-- **非同期・ノンブロッキング動作**: センサーの初期化や指紋認証処理は専用の独立したスレッドで行われます。そのため、認証待ち中や長いパスワードを送信している最中でも、通常のタイピング（他のキー入力）やレイヤー切り替えが阻害されることはありません。
+- **非同期・ノンブロッキング動作**: センサーの初期化や指紋認証処理は専用의独立したスレッドで行われます。そのため、認証待ち中や長いパスワードを送信している最中でも、通常のタイピング（他のキー入力）やレイヤー切り替えが阻害されることはありません。
 - **自動リカバリ (起動待機)**: キーボード起動直後に指紋センサーの応答がない場合でも諦めず、バックグラウンド接続のリトライを維持します。後から線が繋がった場合でも、自動的に復帰して利用可能になります。
 - **Web対応設定ツール**: Web Serial API対応ブラウザ（Chrome/Edge等）から [config.html](./config.html) を開き、パスワードや指紋の管理が可能です。（登録名は最大31文字、パスワードは最大63文字まで対応）
 
@@ -72,18 +72,11 @@ CONFIG_NVS=y
 CONFIG_SETTINGS_NVS=y
 CONFIG_REBOOT=y
 
-# Serial RPC を使う場合の競合回避（通信安定化の必須設定）
+# Serial RPC を使う場合の競合回避（JSON破損防止）
 CONFIG_ZMK_USB_LOGGING=n
 CONFIG_LOG_BACKEND_UART=n
 CONFIG_UART_CONSOLE=n
-CONFIG_CONSOLE=n
-CONFIG_STDOUT_CONSOLE=n
-CONFIG_PRINTK=n
 ```
-
-> [!CAUTION]
-> **ZMK Studio との併用について**:
-> ZMK Studio も RPC 通信を使用するため、USB CDC ACM ラインを奪い合ったり、JSON データの破損を招く恐れがあります。また、ZMK Studio はリソース（RAM/Flash）消費が多いため、マイコンの容量不足を招く可能性があります。安定した RPC 通信と指紋データの保存（NVS 領域）を優先する場合、ZMK Studio の無効化 (`CONFIG_ZMK_STUDIO=n`) を検討してください。
 
 #### オプション設定
 
@@ -92,22 +85,28 @@ CONFIG_PRINTK=n
 | `CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S` | `60` | 登録タイムアウト（秒）。範囲: 10〜300 |
 | `CONFIG_ZMK_TOUCHPASS_POLL_INTERVAL_MS` | `80` | 常時待機モードのポーリング間隔（ms）。範囲: 50〜500。`ALWAYS_ON` 有効時のみ有効 |
 
-### 3. デバイスツリー (.overlay) の設定
+### 3. デバイスツリー (.overlay) と キーマップ (.keymap) の設定
 
-指紋センサーを接続する UART ピンを定義し、Behavior をインスタンス化します。
+#### 3-1. キーマップ (.keymap) の設定
+
+利用するキーマップファイルの先頭に、指紋センサー用の Behavior 定義 (`touchpass.dtsi`) をインクルードします。
+
+```dts
+#include <behaviors/touchpass.dtsi>
+```
+
+これにより、キーマップ内で `&touchpass` が利用可能になります。
+
+#### 3-2. デバイスツリー (.overlay) の設定
+
+続いてボード用のオーバーレイファイルで、以下を定義します。
+- 指紋センサーを接続する UART ピン
+- (オプション) config.html 用の CDC ACM ノード
+- NVS (Flash) 領域の調整
+
 以下は XIAO nRF52840 (D6/TX, D7/RX) の例です。
 
 ```dts
-// Behavior 定義
-/ {
-    behaviors {
-        touchpass: touchpass {
-            compatible = "zmk,behavior-touchpass";
-            #binding-cells = <0>;
-        };
-    };
-};
-
 // ピンアサインの設定 (ボードに合わせて変更してください)
 &pinctrl {
     uart0_default: uart0_default {
@@ -134,9 +133,9 @@ CONFIG_PRINTK=n
 };
 
 // Serial RPC (config.html) を使用する場合は以下も追加
-&usbd {
+&zephyr_udc0 {
     status = "okay";
-    usb_cdc_acm_uart: usb_cdc_acm_uart {
+    usb_cdc_acm_uart: cdc-acm-uart {
         compatible = "zephyr,cdc-acm-uart";
     };
 };
@@ -160,9 +159,6 @@ CONFIG_PRINTK=n
         #address-cells = <1>;
         #size-cells = <1>;
 
-        /* ヒント: nRF52840 等で領域が重複してビルドエラーになる場合は、
-           code_partition のサイズを 0x8000 (32KB) ほど削って調整してください */
-
         touchpass_partition: partition@e4000 {
             label = "touchpass";
             reg = <0x000e4000 0x00008000>;
@@ -185,14 +181,14 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 | **VCC (Red)** | **3.3V** | 電源 (3.3V 専用) |
 | **GND (Black)** | **GND** | グラウンド |
 | **TX (Yellow)** | **D7 (P1.12 / RX)** | データ送信 → MCU の RX へ |
-| **RX (White)** | **D6 (P1.11 / TX)** | データ受信 ← MCU の TX へ |
+| **RX (Green)** | **D6 (P1.11 / TX)** | データ受信 ← MCU の TX へ |
 
 > [!CAUTION]
 > センサーの TX を MCU の TX に繋がないよう注意してください（クロス接続が必要です）。
 
 ### 5. キーマップでの使用
 
-`config/your_keyboard.keymap` で、定義した `&touchpass` をキーに割り当てます。
+`config/your_keyboard.keymap` (の先頭に `#include <behaviors/touchpass.dtsi>` を追記した状態) で、定義された `&touchpass` を任意のキーに割り当てます。
 
 ```dts
 / {
