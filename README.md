@@ -27,12 +27,12 @@ TouchPass は、指紋センサー（R502-A 等）を使用してパスワード
 ```yaml
 manifest:
   remotes:
-    - name: razilyis
+    - name: TouchPass
       url-base: https://github.com/razilyis
 
   projects:
     - name: zmk-module-Fingerprint
-      remote: razilyis # 指紋センサーモジュールを指定
+      remote: TouchPass # 指紋センサーモジュールを指定
       revision: main
 ```
 
