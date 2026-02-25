@@ -1,0 +1,15 @@
+/*
+ * Copyright (c) 2024 Tobias Weissert
+ * Copyright (c) 2024 RaZiLy
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+/ {
+    behaviors {
+        touchpass: touchpass {
+            compatible = "zmk,behavior-touchpass";
+            #binding-cells = <0>;
+        };
+    };
+};

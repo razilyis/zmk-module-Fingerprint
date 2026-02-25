@@ -9,7 +9,7 @@
 
 > [!WARNING]
 > **セキュリティに関する注意**: 登録したパスワードはフラッシュメモリに**暗号化なしで平文保存**されます。
-> また、`config.html` との通信（USB CDC ACM）やファームウェアの読み出しによって、パスワードが第三者に漏洩する可能性があります。
+> また、設定ツール（Web Serial）との通信やファームウェアの読み出しによって、パスワードが第三者に漏洩する可能性があります。
 > 本モジュールの使用は、物理的なセキュリティが確保された環境を前提としています。
 
 TouchPass は、指紋センサー（R502-A 等）を使用してパスワードを管理・入力するための ZMK モジュールです。
@@ -19,7 +19,13 @@ TouchPass は、指紋センサー（R502-A 等）を使用してパスワード
 ### 主な特徴
 - **非同期・ノンブロッキング動作**: センサーの初期化や指紋認証処理は専用の独立したスレッドで行われます。そのため、認証待ち中や長いパスワードを送信している最中でも、通常のタイピング（他のキー入力）やレイヤー切り替えが阻害されることはありません。
 - **自動リカバリ (起動待機)**: キーボード起動直後に指紋センサーの応答がない場合でも諦めず、バックグラウンド接続のリトライを維持します。後から線が繋がった場合でも、自動的に復帰して利用可能になります。
-- **Web対応設定ツール**: Web Serial API対応ブラウザ（Chrome/Edge等）から [config.html](./config.html) を開き、パスワードや指紋の管理が可能です。（登録名は最大31文字、パスワードは最大63文字まで対応）
+- **Web対応設定ツール**: Web Serial API対応ブラウザ（Chrome/Edge等）から、GitHub Pages で公開されている設定ツール、またはリポジトリの [index.html](./index.html) を開き、パスワードや指紋の管理が可能です。（登録名は最大31文字、パスワードは最大63文字まで対応）
+
+## 設定ツール (index.html)
+ビルドしたファームウェアを書き込んだ後、USB で PC に接続し、以下のいずれかの方法で設定ツールを開きます。
+
+- **GitHub Pages (推奨)**: [https://razilyis.github.io/zmk-module-Fingerprint/](https://razilyis.github.io/zmk-module-Fingerprint/)
+- **ローカルファイル**: リポジトリ内の [index.html](./index.html) をブラウザで開く
 
 ## 他のキーボードへの導入方法
 
@@ -53,7 +59,7 @@ manifest:
 CONFIG_ZMK_TOUCHPASS=y
 CONFIG_SERIAL=y
 
-# 設定ツール (config.html) 用のシリアル通信を有効化
+# 設定ツール用のシリアル通信を有効化
 CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y
 
 # 常時待機モード（指を置くだけで入力）を有効化する場合（デフォルト: n）
@@ -101,7 +107,7 @@ CONFIG_UART_CONSOLE=n
 
 続いてボード用のオーバーレイファイルで、以下を定義します。
 - 指紋センサーを接続する UART ピン
-- (オプション) config.html 用の CDC ACM ノード
+- (オプション) 設定ツール用の CDC ACM ノード
 - NVS (Flash) 領域の調整
 
 以下は XIAO nRF52840 (D6/TX, D7/RX) の例です。
@@ -132,7 +138,7 @@ CONFIG_UART_CONSOLE=n
     pinctrl-names = "default", "sleep";
 };
 
-// Serial RPC (config.html) を使用する場合は以下も追加
+// Serial RPC を使用する場合は以下も追加
 &zephyr_udc0 {
     status = "okay";
     usb_cdc_acm_uart: cdc-acm-uart {
@@ -192,6 +198,8 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 
 **設定例：**
 ```dts
+#include <behaviors/touchpass.dtsi> // ファイルの先頭に追記
+
 // ... 他の設定 ...
 
             bindings = <
@@ -201,14 +209,20 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
             >;
 ```
 
-## 設定ツール (config.html)
+#### `&touchpass` の動作仕様
+キーボード上で `&touchpass` を割り当てたキーを押下すると、以下の処理が非同期で実行されます：
+1. **待機開始**: 指紋センサーが青色等に点灯（または点滅）し、指紋の読み取り待機状態になります。
+2. **パスワード自動入力**: 登録済みの指を乗せて認証に成功した場合、センサー内部に保存された対応するパスワードが USB 経由でキーストロークとして即座に自動送信されます（末尾に Enter が付きます）。
+3. **ノンブロッキング処理**: センサーが指紋を待機している間でも、キーボードの他のキー入力やレイヤー切り替えは一切阻害されません。通常通りタイピングを継続できます。
+4. **自動タイムアウト**: 一定時間（おおむね数秒以内）指が置かれなかった場合や、認証に失敗した場合は、待機状態が自動でキャンセルされます（特別なキャンセル操作は不要です）。
 
-ビルドしたファームウェアを書き込んだ後、USB で PC に接続し、[config.html](./config.html) をブラウザで開くことで、以下の操作が可能です。
+## 設定ツールの使用方法
 
-- 指紋の登録（6ステップキャプチャ）
-- 登録済み指紋へのパスワード設定・変更・削除
-- BLE ボンド削除・再起動
-- センサー・接続状態の確認
+1. [GitHub Pages](https://razilyis.github.io/zmk-module-Fingerprint/) を開くか、ローカルの `index.html` をブラウザで開きます。
+2. 指紋の登録（6ステップキャプチャ）
+3. 登録済み指紋へのパスワード設定・変更・削除
+4. BLE ボンド削除・再起動
+5. センサー・接続状態の確認
 
 > [!IMPORTANT]
 > **ブラウザ要件**: Web Serial API を使用するため、**Google Chrome または Microsoft Edge 89 以降**が必要です。Firefox・Safari では動作しません。
@@ -218,8 +232,8 @@ R502-A センサーを以下のように接続します。**電圧は 3.3V** を
 
 | 症状 | 原因候補 | 対処 |
 |---|---|---|
-| `config.html` が接続できない | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=n` | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y` を設定してリビルド |
-| `config.html` が接続できない | `CONFIG_ZMK_USB_LOGGING=y` と競合 | `CONFIG_ZMK_USB_LOGGING=n` に設定 |
+| 接続できない | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=n` | `CONFIG_ZMK_TOUCHPASS_SERIAL_RPC=y` を設定してリビルド |
+| 接続できない | `CONFIG_ZMK_USB_LOGGING=y` と競合 | `CONFIG_ZMK_USB_LOGGING=n` に設定 |
 | センサーが認識されない | UART ピン設定ミス | `.overlay` のピン番号と実際の配線を確認 |
 | センサーが認識されない | 電源電圧 | R502-A は **3.3V 専用**。5V 接続は破損の原因 |
 | 登録がタイムアウトする | デフォルトの60秒では短い | `CONFIG_ZMK_TOUCHPASS_ENROLL_TIMEOUT_S=120` 等に延長 |
