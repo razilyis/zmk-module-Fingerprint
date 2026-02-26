@@ -95,13 +95,28 @@ CONFIG_UART_CONSOLE=n
 
 #### 3-1. キーマップ (.keymap) の設定
 
-利用するキーマップファイルの先頭に、指紋センサー用の Behavior 定義 (`touchpass.dtsi`) をインクルードします。
+通常は、利用するキーマップファイルの先頭に指紋センサー用の Behavior 定義 (`touchpass.dtsi`) をインクルードします。
 
 ```dts
 #include <behaviors/touchpass.dtsi>
 ```
 
 これにより、キーマップ内で `&touchpass` が利用可能になります。
+
+> [!TIP]
+> **Keymap Editor (GUI) への対応**  
+> GUI ベースの Keymap Editor を使用する場合、外部モジュールのインクルードファイル内にある Behavior は認識されない（候補に表示されない）ことがあります。その場合は、`#include` を使わずに、以下の定義を直接 `.keymap` ファイルの `behaviors` ブロック内に記述してください。
+>
+> ```dts
+> / {
+>     behaviors {
+>         touchpass: touchpass {
+>             compatible = "zmk,behavior-touchpass";
+>             #binding-cells = <0>;
+>         };
+>     };
+> };
+> ```
 
 #### 3-2. デバイスツリー (.overlay) の設定
 
